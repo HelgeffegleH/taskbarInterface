@@ -11,7 +11,10 @@
 	; Context: this = "new taskbarInterface(...)"
 	; Note, further down the context switches to this=taskbarInterface, for convenience. The switch is clearly marked.
 	; User methods.
-	; in the following n is the button number, n ∈ [1,7]⊂ℤ
+	; 
+	;
+	; Button methods,
+	;	- in the following n is the button number, n ∈ [1,7]⊂ℤ
 	showButton(n){
 		; Show button n
 		static THBF_HIDDEN:=0x8
@@ -101,6 +104,54 @@
 		this.updateThumbButtonFlags(n,0,THBF_NONINTERACTIVE)			; Update flag, remove THBF_NONINTERACTIVE:=0x10
 		return this.ThumbBarUpdateButtons(n)							; Update
 	}
+	;
+	; End Button methods
+	;
+	; Misc interface methods:
+	
+	; setThumbnailToolTip(text)
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391702(v=vs.85).aspx (ITaskbarList3::SetThumbnailTooltip method)
+	; Specifies or updates the text of the tooltip that is displayed when the mouse pointer rests on an individual preview thumbnail in a taskbar button flyout.
+	; Input:
+	; Text, string specifying the new text to show as tooltip when 
+	; mouse cursor hovers the thumbnail preview in the taskbar
+	; Specify an empty strin, text:="" to remove the tooltip.
+	setThumbnailToolTip(text){
+		this.tooltipText:=text
+		return this._setThumbnailToolTip()
+	}
+	
+	; setThumbnailClip()
+	; Selects a portion of a window's client area to display as that window's thumbnail in the taskbar
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391701(v=vs.85).aspx (ITaskbarList3::SetThumbnailClip method)
+	; rect:
+	; The RECT structure defines the coordinates of the upper-left and lower-right corners of a rectangle
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd162897(v=vs.85).aspx (RECT structure)
+	; LONG left;
+	; LONG top;
+	; LONG right;
+	; LONG bottom;
+	; Input
+	; left 		(x1)
+	;	- The x-coordinate of the upper-left corner of the rectangle.
+	; top  		(y1)
+	;	- The y-coordinate of the upper-left corner of the rectangle.
+	; right		(x2)
+	; 	- The x-coordinate of the lower-right corner of the rectangle.
+	; bottom	(y2)
+	;	- The y-coordinate of the lower-right corner of the rectangle.
+	; Call without any parameters to reset to default
+	setThumbnailClip(left:="",top:="",right:="",bottom:=""){
+		if (left="" || top="" || right="" || bottom="")
+			return this._setThumbnailClip(0)
+		VarSetCapacity(rect,16,0)
+		Numput(left,rect,0,"Int") , Numput(top,rect,4,"Int")
+		Numput(right,rect,8,"Int"),	Numput(bottom,rect,12,"Int")
+		return this._setThumbnailClip(&rect)
+	}
 	; Misc
 	freeMemory(){
 		; There is no need to keep the memory allocated if there is no intentions to make any changes to the interface.
@@ -152,9 +203,13 @@
 		SysGet, SM_CYICON, 12
 		return {w:SM_CXICON, h:SM_CYICON}
 	}
+	;
 	; End user methods
+	;
+	;
 	; Internal methods
 	; Meta functions 
+	;
 	__Call(fn,p*){
 		; For verifying correct input. maybe change this.
 		if InStr( 	  ",showButton,hideButton,setButtonIcon,enableButton,disableButton"
@@ -231,8 +286,6 @@
 	setThumbButtonToolTipText(iId,text:=""){
 		static	itemOffset		:=	8+2*A_PtrSize															; szTip
 				structOffset	:=	this.thumbButtonSize*(iId-1)
-		;if (text="")
-			;return NumPut(0, this.THUMBBUTTON+structOffset+itemOffset, 0, "Char")							; Null terminate, there is room for an int.
 		return StrPut(SubStr(text,1,259), this.THUMBBUTTON+structOffset+itemOffset, 260, "UTF-16")			; Make sure tooltip text isn't too long
 	}
 	setThumbButtonFlags(iId,dwFlags){
@@ -253,8 +306,11 @@
 	ThumbBarUpdateButtons(iId){
 		return taskbarInterface.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
 	}
-	ThumbBarToolTip(){
-		return taskbarInterface.ThumbBarToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
+	_setThumbnailToolTip(){
+		return taskbarInterface.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
+	}
+	_setThumbnailClip(rect){
+		return taskbarInterface.ThumbnailClipFn.Call("Ptr", this.hWnd, "Ptr", rect)
 	}
 	             
 	;
@@ -304,7 +360,8 @@
 																																								; Name:					 Number:
 		this.ThumbBarAddButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+15*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; ThumbBarAddButtons		(15)
 		this.ThumbBarUpdateButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+16*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ThumbBarUpdateButtons		(16)
-		this.ThumbBarToolTipFn:=Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; ThumbBarToolTip			(19)
+		this.ThumbnailToolTipFn:=Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; SetThumbnailTooltip		(19)
+		this.ThumbnailClipFn:=Func("DllCall").Bind(NumGet(this.vTable+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetThumbnailClip			(20)
 																																		
 		this.init:=1
 		return	
