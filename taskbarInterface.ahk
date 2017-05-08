@@ -107,12 +107,107 @@
 	;
 	; End Button methods
 	;
+	
 	; Misc interface methods:
 	
+	; setProgress - The underlying function is called SetProgressValue, but
+	;	i think the word Type is more descriptive of its function.
+	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
+	; specific percentage completed of the full operation.
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391698(v=vs.85).aspx (ITaskbarList3::SetProgressValue method)
+	setProgress(value:=0){
+		; value in range (0,100)
+		return this.SetProgressValue(value)
+	}
+
+	; SetProgressType(type) - The underlying function is called SetProgressState, but
+	;	i think the word Type is more descriptive of its function.
+	; 
+	; Sets the type and state of the progress indicator displayed on a taskbar button.
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391697(v=vs.85).aspx (ITaskbarList3::SetProgressState)
+	; HWND    hwnd,
+	; TBPFLAG tbpFlags
+	; Flags that control the current state of the progress button. Specify  only  one
+	; of the following flags; all states are mutually exclusive of all others.
+	; TBPF_NOPROGRESS (0x00000000)
+	; 	Stops displaying progress and returns the button to its normal state. Call this
+	; 	method with this flag to dismiss  the  progress  bar  when  the  operation  is
+	; 	complete or canceled.
+
+	; TBPF_INDETERMINATE (0x00000001)
+	; The progress indicator does not grow in size, but cycles repeatedly  along  the
+	;	length  of the taskbar button. This indicates activity without specifying what
+	;	proportion of the progress is complete. Progress is taking place, but there is
+	;	no prediction as to how long the operation will take.
+
+	; TBPF_NORMAL (0x00000002)
+	; The progress indicator grows in size from left to right in  proportion  to  the
+	; 	estimated  amount  of  the operation completed. This is a determinate progress
+	;	indicator; a prediction is being made as to the duration of the operation.
+
+	; TBPF_ERROR (0x00000004)
+	; 	The progress indicator turns red to show that an error has occurred in  one  of
+	; 	the windows that is broadcasting progress. This is a determinate state. If the
+	; 	progress  indicator  is  in  the  indeterminate  state,  it  switches to a red
+	; 	determinate display of a generic percentage not indicative of actual progress.
+
+	; TBPF_PAUSED (0x00000008)
+	;	The progress indicator turns yellow to show that progress is currently  stopped
+	;	in  one  of  the  windows  but  can be resumed by the user. No error condition
+	; 	exists and nothing is preventing the  progress  from  continuing.  This  is  a
+	; 	determinate state. If the progress indicator is in the indeterminate state, it
+	; 	switches  to  a  yellow  determinate  display  of  a  generic  percentage  not
+	; 	indicative of actual progress.
+
+	SetProgressType(type:="Normal"){
+		type:= (p:={Off:0,INDETERMINATE:1,Normal:2,Error:4,Paused:8}[type]) ? p : 0
+		return this.setProgressState(type)
+	}
+	
+	flashTaskbarIcon(color:="green", nFlashes:=5, flashTime:=250, offTime:=250){
+		if (color="red")
+			type:="Error"
+		else if (color="yellow")
+			type:="Paused"
+		else
+			type:="Normal"
+		if this.flashTimer {
+			fn:=this.flashTimer
+			SetTimer, % fn, Off
+			this.flashTimer:=""
+		}
+		this.flashesRemaining:=nFlashes
+		this.flashOn(type,flashTime,offTime)
+		return
+	}
+	
+	flashOn(type,flashTime,offTime){
+		this.SetProgressType(type)
+		this.setProgress(100)
+		fn:=ObjBindMethod(this,"flashOff",type,flashTime,offTime)
+		this.flashTimer:=fn
+		SetTimer, % fn, % -flashTime
+		return
+	}
+	
+	flashOff(type,flashTime,offTime){
+		this.SetProgressType("Off")
+		if !(--this.flashesRemaining)
+			return this.flashTimer:=""
+		fn:=ObjBindMethod(this,"flashOn",type,flashTime,offTime)
+		this.flashTimer:=fn
+		SetTimer, % fn, % -offTime
+		return
+	
+	}
 	; setThumbnailToolTip(text)
 	; Url:
 	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391702(v=vs.85).aspx (ITaskbarList3::SetThumbnailTooltip method)
-	; Specifies or updates the text of the tooltip that is displayed when the mouse pointer rests on an individual preview thumbnail in a taskbar button flyout.
+	; Specifies or updates the text of the tooltip that is displayed when  the  mouse
+	; pointer rests on an individual preview thumbnail in a taskbar button flyout.
+
 	; Input:
 	; Text, string specifying the new text to show as tooltip when 
 	; mouse cursor hovers the thumbnail preview in the taskbar
@@ -191,7 +286,9 @@
 		return this.isDisabled:=true
 	}
 	restartThisButtonMonitor(){
-		; This will reenable the button click callbacks. If all message monitor is off, i.e., stopAllButtonMonitor() was called, restart by calling restartAllButtonMonitor()
+		; This will reenable the button click callbacks. 
+		; If all message monitor is off, i.e., stopAllButtonMonitor() was called,
+		; restart by calling restartAllButtonMonitor()
 		; Default is message monitoring on
 		return this.isDisabled:=false
 	}
@@ -329,10 +426,14 @@
 		return taskbarInterface.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
 	}
 	
+	setProgressState(type){
+		return taskbarInterface.SetProgressStateFn.Call("Ptr", this.hWnd, "Uint", type)
+	}
+	setProgressValue(progress){
+		return taskbarInterface.SetProgressValueFn.Call("Ptr", this.hWnd, "Int64", progress, "Int64", 100) ; 100 is max progress (done)
+	}
 	_setOverlayIcon(){
-		hr:=taskbarInterface.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription)
-		Msgbox, % hr  "`n" ErrorLevel  "`n"  A_LastError
-		return 
+		return taskbarInterface.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription) 
 	}
 	_setThumbnailClip(rect){
 		return taskbarInterface.ThumbnailClipFn.Call("Ptr", this.hWnd, "Ptr", rect)
@@ -383,16 +484,20 @@
 		this.vTable:=NumGet(this.hComObj+0)
 		; Create function objects for the interface, for convenience and clarity
 																																								; Name:					 Number:
+		this.ReleaseFn:=Func("DllCall").Bind(NumGet(this.vTable+2*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)														; Release					( 2)
+		this.HrInitFn:=Func("DllCall").Bind(NumGet(this.vTable+3*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)														; HrInit					( 3)
+		
+		this.SetProgressValueFn:=Func("DllCall").Bind(NumGet(this.vTable+9*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetProgressValue			( 9)
+		this.SetProgressStateFn:=Func("DllCall").Bind(NumGet(this.vTable+10*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; SetProgressState			(10)
 		this.ThumbBarAddButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+15*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; ThumbBarAddButtons		(15)
 		this.ThumbBarUpdateButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+16*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ThumbBarUpdateButtons		(16)
 		this.SetOverlayIconFn:=Func("DllCall").Bind(NumGet(this.vTable+18*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetOverlayIcon			(18)
 		this.ThumbnailToolTipFn:=Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; SetThumbnailTooltip		(19)
 		this.ThumbnailClipFn:=Func("DllCall").Bind(NumGet(this.vTable+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetThumbnailClip			(20)
-																																		
+		this.HrInitFn.Call()
 		this.init:=1
 		return	
 	}
-	
 	
 	; Click on button handling:
 	; URL:
