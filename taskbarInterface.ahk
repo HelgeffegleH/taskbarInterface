@@ -121,7 +121,25 @@
 		this.tooltipText:=text
 		return this._setThumbnailToolTip()
 	}
-	
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391696(v=vs.85).aspx (ITaskbarList3::SetOverlayIcon method)
+	; HWND    hwnd,
+	; HICON   hIcon,			(opt)
+	; LPCWSTR pszDescription	(opt)
+	; Notes:
+	;	- To display an overlay icon, the taskbar must be  in  the  default  large
+	;       icon  mode. If the taskbar is configured through Taskbar and Start Menu
+	;       Properties to show small icons, overlays cannot be applied and calls to
+	;       this method are ignored.
+	; 	- The handle of an icon to use as the overlay. This  should  be  a  small  icon,
+	;  		measuring  16x16  pixels  at 96 dpi. If an overlay icon is already applied to
+	;  		the taskbar button, that existing overlay is replaced.
+	;
+	;	Omit the handle paramter to remove the icon. 
+	setSetOverlayIcon(hIcon:=0,text:=""){
+		this.overlayIconHandle:=hIcon, this.overlayIconDescription:=text
+		return this._SetOverlayIcon()
+	}
 	; setThumbnailClip()
 	; Selects a portion of a window's client area to display as that window's thumbnail in the taskbar
 	; Url:
@@ -225,8 +243,8 @@
 		return
 	}
 	verifyiId(iId){
-		; Ensures the button number iId, is in the correct range.
-		; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
+	; Ensures the button number iId, is in the correct range.
+	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
 		if (iId<1 || iId>7 || round(iId)!=iId)
 			throw Exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
 		return 1
@@ -306,8 +324,15 @@
 	ThumbBarUpdateButtons(iId){
 		return taskbarInterface.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
 	}
+	
 	_setThumbnailToolTip(){
 		return taskbarInterface.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
+	}
+	
+	_setOverlayIcon(){
+		hr:=taskbarInterface.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription)
+		Msgbox, % hr  "`n" ErrorLevel  "`n"  A_LastError
+		return 
 	}
 	_setThumbnailClip(rect){
 		return taskbarInterface.ThumbnailClipFn.Call("Ptr", this.hWnd, "Ptr", rect)
@@ -360,6 +385,7 @@
 																																								; Name:					 Number:
 		this.ThumbBarAddButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+15*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; ThumbBarAddButtons		(15)
 		this.ThumbBarUpdateButtonsFn:=Func("DllCall").Bind(NumGet(this.vTable+16*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ThumbBarUpdateButtons		(16)
+		this.SetOverlayIconFn:=Func("DllCall").Bind(NumGet(this.vTable+18*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetOverlayIcon			(18)
 		this.ThumbnailToolTipFn:=Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; SetThumbnailTooltip		(19)
 		this.ThumbnailClipFn:=Func("DllCall").Bind(NumGet(this.vTable+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetThumbnailClip			(20)
 																																		
