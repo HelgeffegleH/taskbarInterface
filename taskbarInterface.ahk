@@ -1,20 +1,41 @@
 ﻿class taskbarInterface {
-	__new(hwnd,onButtonClickFunction){
-		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
-		this.callback:= IsObject(onButtonClickFunction) ? onButtonClickFunction : Func(onButtonClickFunction)	; Pass a func object or function name.
+	static hookUnhide:=true 		; Install hook to refreshButtons when the window (hwnd) is shown (taskbar buttons are removed when hidden)
+	static allDisabled:=true 		; All message monitor is disabled before any objects has been derived from this class.
+	static nCustomPreviews:=0		; Number of custom thumbnail previews enabled. Used for tracking when to turn on / off message handling.
+	static nCustomPeekPreviews:=0	; Number of custom peek previews enabled. Used for tracking when to turn on / off message handling.
+	__new(hwnd,onButtonClickFunction:="",mute:=false){
+		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
+		if taskbarInterface.allInterfaces.HasKey(hwnd){
+			this.lastError:=Exception("There is already an interface for this window.",-1)
+			if mute
+				return this.lastError
+			else
+				throw this.lastError
+		}
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
+		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
+		if onButtonClickFunction							; Optional
+			this.callback:= IsObject(onButtonClickFunction) ? onButtonClickFunction : Func(onButtonClickFunction)	; Pass a func object or function name.
 		if !taskbarInterface.init							; On first call here, initialise the com object and turn on button messages. (WM_COMMAND)
-			taskbarInterface.initCom(), taskbarInterface.turnOnButtonMessages()
-		this.createButtons()								; Create the buttons for this interface.
+			taskbarInterface.initInterface()
+		if this.callback {
+			this.createButtons()							; Create the buttons for this interface.
+			taskbarInterface.restartAllButtonMonitor()		; If monitoring is off, turn on.
+		}
 		this.isDisabled:=false								; By deafault, the interface is not disabled, us stopThisButtonMonitor() to disable.
 	}
 	; Context: this = "new taskbarInterface(...)"
 	; Note, further down the context switches to this=taskbarInterface, for convenience. The switch is clearly marked.
 	; User methods.
+	;
 	; 
 	;
 	; Button methods,
+	;	Creates a toolbar with up to seven buttons,
+	;	thee toolbar itself cannot be removed without re-creating the window itself.
+	;
 	;	- in the following n is the button number, n ∈ [1,7]⊂ℤ
+	
 	showButton(n){
 		; Show button n
 		static THBF_HIDDEN:=0x8
@@ -53,11 +74,12 @@
 	setButtonToolTip(n,text:=""){
 		; Sets the tooltip for button n, that is shown when the
 		; mouse cursors hover over the button for a few seconds.
+		; Omit text to remove tooltip.
 		static THB_TOOLTIP:=0x4
 		if (text!="")
 			this.updateThumbButtonMask(n,THB_TOOLTIP,0)		; Update mask THB_TOOLTIP, add
 		this.setThumbButtonToolTipText(n,text)				; Update the text
-		this.ThumbBarUpdateButtons(n)						; Update
+		this.ThumbBarUpdateButtons(n)						; Update the buttons
 		if (text="")
 			this.updateThumbButtonMask(n,0,THB_TOOLTIP)		; Update mask THB_TOOLTIP, remove
 		return 
@@ -66,7 +88,7 @@
         ; Call with dismiss:=true to make button  n's  click
         ; to  cause  the thumbnail preview to be dismissed
         ; (close). To show again, hover mouse on taskbar icon.
-        ; Call with  dismiss:false  to  invoke  the  default
+        ; Call with  dismiss:=false  to  invoke  the  default
 		; behaviour, i.e, no dismiss on click.
 		static THBF_DISMISSONCLICK  := 0x2
 		if dismiss
@@ -79,7 +101,7 @@
 		; Remove the background (and/or border) of button n.
 		; The button has a background by default
 		static THBF_NOBACKGROUND  := 0x4
-		this.updateThumbButtonFlags(n,THBF_NOBACKGROUND,0)				; Update flag, add THBF_NOBACKGROUND:=0x2
+		this.updateThumbButtonFlags(n,THBF_NOBACKGROUND,0)				; Update flag, add THBF_NOBACKGROUND:=0x4
 		return this.ThumbBarUpdateButtons(n)							; Update
 	}
 	reAddButtonBackground(n){
@@ -87,10 +109,9 @@
 		; Only needed to call if removeButtonBackground(n) was
 		; previously called
 		static THBF_NOBACKGROUND  := 0x4
-		this.updateThumbButtonFlags(n,0,THBF_NOBACKGROUND)				; Update flag, remove THBF_NOBACKGROUND:=0x2
+		this.updateThumbButtonFlags(n,0,THBF_NOBACKGROUND)				; Update flag, remove THBF_NOBACKGROUND:=0x4
 		return this.ThumbBarUpdateButtons(n)							; Update
 	}
-	
 	setButtonNonInteractive(n){
 		; Set button n to be non-interactive,
 		; similar to disableButton(n), but the button doesn't gray out.
@@ -111,18 +132,19 @@
 	; Misc interface methods:
 	
 	; setProgress - The underlying function is called SetProgressValue, but
-	;	i think the word Type is more descriptive of its function.
+	;	I think the word Type is more descriptive of its function.
 	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
 	; specific percentage completed of the full operation.
 	; Url:
 	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391698(v=vs.85).aspx (ITaskbarList3::SetProgressValue method)
 	setProgress(value:=0){
 		; value in range (0,100)
+		this.progressValue:=value
 		return this.SetProgressValue(value)
 	}
 
 	; SetProgressType(type) - The underlying function is called SetProgressState, but
-	;	i think the word Type is more descriptive of its function.
+	;	I think the word Type is more descriptive of its function.
 	; 
 	; Sets the type and state of the progress indicator displayed on a taskbar button.
 	; Url:
@@ -162,45 +184,30 @@
 	; 	indicative of actual progress.
 
 	SetProgressType(type:="Normal"){
-		type:= (p:={Off:0,INDETERMINATE:1,Normal:2,Error:4,Paused:8}[type]) ? p : 0
-		return this.setProgressState(type)
+		this.progressType:= (p:={Off:0,INDETERMINATE:1,Normal:2, Green:2, Error:4, Red:4,Paused:8,Pause:8,Yellow:8}[type]) ? p : 0
+		return this.setProgressState()
 	}
 	
-	flashTaskbarIcon(color:="green", nFlashes:=5, flashTime:=250, offTime:=250){
-		if (color="red")
-			type:="Error"
-		else if (color="yellow")
-			type:="Paused"
-		else
-			type:="Normal"
-		if this.flashTimer {
-			fn:=this.flashTimer
-			SetTimer, % fn, Off
-			this.flashTimer:=""
-		}
+	flashTaskbarIcon(color:="off", nFlashes:=5, flashTime:=250, offTime:=250){
+		; Flash the background of the taskbar icon by setting it to progress 100 for  flashTime  ms  every
+		;  offTime  ms, nFlashes times. Valid colors are green,red,yellow. (translates to
+		;  normal, error, paused progresstype)
+		; Uses a timer to let script run "in parallel"
+		this.stopTimer() 						; Stop any currently running timer.
+		this.flashParams:=[color, nFlashes, flashTime, offTime]
+		if (color="Off" || color="")
+			return
 		this.flashesRemaining:=nFlashes
-		this.flashOn(type,flashTime,offTime)
+		this.flashOn(color,flashTime,offTime)
 		return
 	}
-	
-	flashOn(type,flashTime,offTime){
-		this.SetProgressType(type)
-		this.setProgress(100)
-		fn:=ObjBindMethod(this,"flashOff",type,flashTime,offTime)
-		this.flashTimer:=fn
-		SetTimer, % fn, % -flashTime
+	setTaskbarIconColor(color:="off"){
+		; Set the background color of the taskbar icon (sets progress to 100 with appropriate progressState)
+		; Color, "green", "yellow" or "red"
+		this.SetProgressType(color)
+		if (color!="off" || color="")
+			this.setProgress(100)
 		return
-	}
-	
-	flashOff(type,flashTime,offTime){
-		this.SetProgressType("Off")
-		if !(--this.flashesRemaining)
-			return this.flashTimer:=""
-		fn:=ObjBindMethod(this,"flashOn",type,flashTime,offTime)
-		this.flashTimer:=fn
-		SetTimer, % fn, % -offTime
-		return
-	
 	}
 	; setThumbnailToolTip(text)
 	; Url:
@@ -231,7 +238,7 @@
 	;  		the taskbar button, that existing overlay is replaced.
 	;
 	;	Omit the handle paramter to remove the icon. 
-	setSetOverlayIcon(hIcon:=0,text:=""){
+	setOverlayIcon(hIcon:=0,text:=""){
 		this.overlayIconHandle:=hIcon, this.overlayIconDescription:=text
 		return this._SetOverlayIcon()
 	}
@@ -258,24 +265,174 @@
 	;	- The y-coordinate of the lower-right corner of the rectangle.
 	; Call without any parameters to reset to default
 	setThumbnailClip(left:="",top:="",right:="",bottom:=""){
-		if (left="" || top="" || right="" || bottom="")
+		if (left="" || top="" || right="" || bottom=""){
+			this.thumbnailClipRect:=""
 			return this._setThumbnailClip(0)
+		}
+		this.thumbnailClipRect:=[left,top,right,bottom] ; For restoring
 		VarSetCapacity(rect,16,0)
 		Numput(left,rect,0,"Int") , Numput(top,rect,4,"Int")
 		Numput(right,rect,8,"Int"),	Numput(bottom,rect,12,"Int")
 		return this._setThumbnailClip(&rect)
 	}
+	enableCustomThumbnailPreview(bitmapOrBitmapFunc,rate:=0, autoDeleteBitmap:=true, addBorder:=false){
+		; bitmapOrBitmapFunc,	a bitmap handle or func object that takes three parameters, max width and max height of the bitmap and a reference to the interface.
+		; 						the bitmapFunc should return a bitmap handle to used as thumbnail preview for the interface's window. If passing a bitmap, rate must be 0.
+		; rate, the rate in ms at which the bitmap will be updated, bitmapFunc will be called every rate ms. Set rate 0 if passing a bitmap as bitmapOrBitmapFunc.
+		; autoDeleteBitmap, set to true to let the interface dispose of the bitmap when it is finished with it.
+		; addBorder, set to true to draw a border around the bitmap.
+		; Note: if not providing a custom peek preview, it is recommended that you call the (instance) method disallowPeek().
+		static WM_DWMSENDICONICTHUMBNAIL:=0x323													; Note: 0x323 > 0x312 => msg is buffered.
+		
+		if this.CustomThumbnailPreviewEnabled													; If already enabled, do nothing
+			return
+		if !taskbarInterface.nCustomPreviews {													; Turn on message handler when calling this method the first time.
+			taskbarInterface.WM_DWMSENDICONICTHUMBNAILfn:=ObjBindMethod(taskbarInterface,"WM_DWMSENDICONICTHUMBNAIL")
+			OnMessage(WM_DWMSENDICONICTHUMBNAIL,taskbarInterface.WM_DWMSENDICONICTHUMBNAILfn)	
+		}
+		taskbarInterface.nCustomPreviews++														; Increment counter, to track when to turn on / off message handler
+		rate := (IsObject(bitmapOrBitmapFunc) && rate=0) ? 1 : rate 	; If user doesn't follow instructions, try  to save the day.
+		this.bitmapFunc:= IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
+		if !this.bitmapFunc {																	; If invalid bitmapFunc, return/throw exception
+			this.lastError:=Exception("The provided bitmap (function) is not a valid.", -1)
+			if this.mute
+				return this.lastError
+			else
+				throw this.lastError
+		}
+		this.thumbrate:=rate
+		this.saveThumbBitmap:= rate=0 ? true : false
+		if !rate
+			this.thumbHbm:=bitmapOrBitmapFunc
+		this.deleteBMPThumbnailPreview:=autoDeleteBitmap
+		this.dwSITFlagsThumbnailPreview:=addBorder
+		this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,1)										; See dwm lib for details.
+		this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,1)
+		this.Dwm_InvalidateIconicBitmaps(this.hwnd)
+		return this.CustomThumbnailPreviewEnabled:=true
+	}
+	disableCustomThumbnailPreview(){
+		static WM_DWMSENDICONICTHUMBNAIL:=0x323	
+		if (!this.CustomThumbnailPreviewEnabled || !taskbarInterface.nCustomPreviews)
+			return
+		if (tf:=this.invalidateThumbTimerFn){
+			SetTimer, % tf, Delete
+			this.invalidateThumbTimerFn:=""
+		}
+		taskbarInterface.nCustomPreviews--
+		if !taskbarInterface.nCustomPreviews														; Turn off message handler when the last custom preview has been disabled
+			OnMessage(WM_DWMSENDICONICTHUMBNAIL,taskbarInterface.WM_DWMSENDICONICTHUMBNAILfn,0), taskbarInterface.WM_DWMSENDICONICTHUMBNAILfn:=""
+		this.CustomThumbnailPreviewEnabled:=0
+		this.bitmapFunc:=""
+		if !this.CustomPeekPreviewEnabled {
+			this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,0)									; Restores the default preview, provided by the OS.
+			this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,0)
+		}
+		if (this.deleteBMPThumbnailPreview && this.thumbHbm)
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.thumbHbm)
+		this.thumbHbm:=""
+		return
+	}
+	enableCustomPeekPreview(bitmapOrBitmapFunc,rate:=0,x:="",y:="",autoDeleteBitmap:=true, addBorder:=false){
+		; bitmapOrBitmapFunc,	a bitmap handle or func object that takes three parameters, max width and max height of the bitmap and a reference to the interface.
+		; 						the bitmapFunc should return a bitmap handle to used as thumbnail preview for the interface's window. If passing a bitmap, rate must be 0.
+		; rate, the rate in ms at which the bitmap will be updated, bitmapFunc will be called every rate ms. Set rate 0 if passing a bitmap as bitmapOrBitmapFunc.
+		; x,y, offset for the bitmap.
+		; autoDeleteBitmap, set to true to let the interface dispose of the bitmap when it is finished with it.
+		; addBorder, set to true to draw a border around the bitmap.
+		; If you have previously called disallowPeek(), call allowPeek()
+		static WM_DWMSENDICONICLIVEPREVIEWBITMAP:=0x326												; Note: 0x323 > 0x312 => msg is buffered.
+		
+		if this.CustomPeekPreviewEnabled															; If already enabled, do nothing
+			return
+		if !taskbarInterface.nCustomPeekPreviews {													; Turn on message handler when calling this method the first time.
+			taskbarInterface.WM_DWMSENDICONICLIVEPREVIEWBITMAPfn:=ObjBindMethod(taskbarInterface,"WM_DWMSENDICONICLIVEPREVIEWBITMAP")
+			OnMessage(WM_DWMSENDICONICLIVEPREVIEWBITMAP,taskbarInterface.WM_DWMSENDICONICLIVEPREVIEWBITMAPfn)	
+		}
+		taskbarInterface.nCustomPeekPreviews++														; Increment counter, to track when to turn on / off message handler
+		rate := (IsObject(bitmapOrBitmapFunc) && rate=0) ? 1 : rate 	; If user doesn't follow instructions, try  to save the day.
+		this.peekbitmapFunc:= IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
+		if !this.peekbitmapFunc {																	; If invalid bitmapOrBitmapFunc, return/throw exception
+			this.lastError:=Exception("The provided bitmap (function) is not a valid.", -1)
+			if this.mute
+				return this.lastError
+			else
+				throw this.lastError
+		}
+		this.peekrate:=rate
+		this.savePeekBitmap:= rate=0 ? true : false
+		if !rate
+			this.peekHbm:=bitmapOrBitmapFunc
+		this.peekX:=x
+		this.peeky:=y
+		this.deleteBMPPeekPreview:=autoDeleteBitmap
+		this.dwSITFlagsPeekPreview:=addBorder
+		this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,1)										; See dwm lib for details.
+		this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,1)
+		
+		this.Dwm_InvalidateIconicBitmaps(this.hwnd)
+		return this.CustomPeekPreviewEnabled:=true
+	}
+	disableCustomPeekPreview(){
+		static WM_DWMSENDICONICLIVEPREVIEWBITMAP:=0x326	
+		if (!this.CustomPeekPreviewEnabled || !taskbarInterface.nCustomPeekPreviews)
+			return
+		if (tf:=this.invalidatePeekTimerFn) {
+			SetTimer, % tf, Delete
+			this.invalidatePeekTimerFn:=""
+		}
+		taskbarInterface.nCustomPeekPreviews--
+		if !taskbarInterface.nCustomPeekPreviews													; Turn off message handler when the last custom preview has been disabled
+			OnMessage(WM_DWMSENDICONICLIVEPREVIEWBITMAP,taskbarInterface.WM_DWMSENDICONICLIVEPREVIEWBITMAPfn,0), taskbarInterface.WM_DWMSENDICONICLIVEPREVIEWBITMAPfn:=""
+		this.CustomPeekPreviewEnabled:=0
+		this.peekbitmapFunc:=""
+		if !this.CustomThumbnailPreviewEnabled {
+			this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,0)									; Restores the default preview, provided by the OS.
+			this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,0)
+		}
+		if (this.deleteBMPPeekPreview && this.peekHbm)
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.peekHbm)
+		this.thumbHbm:=""
+		return
+	}
+	disallowPeek(){	; See dwm lib for details (Dwm_SetWindowAttributeDisallowPeek)
+		return this.Dwm_SetWindowAttributeDisallowPeek(this.hwnd,true)									; Disallow peek if no custom peekpreview
+	}
+	allowPeek(){	; See dwm lib for details (Dwm_SetWindowAttributeDisallowPeek)
+		return this.Dwm_SetWindowAttributeDisallowPeek(this.hwnd,false)									; Do not disallow peek.
+	}
 	; Misc
-	freeMemory(){
-		; There is no need to keep the memory allocated if there is no intentions to make any changes to the interface.
-		if this.THUMBBUTTON
-			this.GlobalFree(this.THUMBBUTTON)
-		this.isFreed:=true
+	refreshButtons(){
+		;
+		; https://msdn.microsoft.com/en-us/library/windows/hardware/ff561808(v=vs.85).aspx
+		;
+		this.ThumbBarAddButtons()
+		this.ThumbBarUpdateButtons(1,7)
+		this._SetOverlayIcon()
+		if this.thumbnailClipRect
+			this.setThumbnailClip(this.thumbnailClipRect*)
+		if (this.tooltipText!="")
+			this._setThumbnailToolTip()
+		; The following handles flashTimers and progress
+		if (this.progressValue!="" && !this.flashTimer)
+			this.SetProgressValue()
+		if (this.progressType!="" && !this.flashTimer)
+			this.setProgressState()
+		if this.flashesRemaining && IsObject(this.flashParams) {
+			this.flashParams[2]:=this.flashesRemaining
+			this.flashtaskbaricon(this.flashParams*)
+		}
 		return
 	}
 	clear(){
+		; Call this function before clearing your last reference to any object derived from this class.
+		; Turn off timer if on.
+		this.stopTimer()
+		; Disable (and free) custom preview bitmaps
+		this.disableCustomThumbnailPreview()
+		this.disableCustomPeekPreview()
 		; Remove from allInterfaces array
-		taskbarInterface.allInterfaces.Delete(this.hwnd)
+		taskbarInterface.allInterfaces.Delete(this.hWnd)
 		; Free memory
 		this.freeMemory()
 		return
@@ -292,7 +449,20 @@
 		; Default is message monitoring on
 		return this.isDisabled:=false
 	}
-	; Global methods, affects all interfaces
+	getLastError(){
+		; Returns the last error object from exception(...)
+		return this.lastError
+	}
+	queryButtonIconSize(){	
+		; Returns the required pixel width and height for the button icons.
+		; Example:
+		; sz:=taskbarInterface.queryButtonIconSize()
+		; Msgbox, % "The icon width must be: " sz.w  "`nThe icon height must be: " sz.h
+		SysGet, SM_CXICON, 11
+		SysGet, SM_CYICON, 12
+		return {w:SM_CXICON, h:SM_CYICON}
+	}
+	; Class methods, affects all interfaces
 	clearAll(){
 		for k, interface in taskbarInterface.allInterfaces
 			interface.clear()
@@ -309,15 +479,6 @@
 		if taskbarInterface.allDisabled
 			return taskbarInterface.turnOnButtonMessages(), taskbarInterface.allDisabled:=false
 	}
-	queryButtonIconSize(){	
-		; Returns the required pixel width and height for the button icons.
-		; Example:
-		; sz:=taskbarInterface.queryButtonIconSize()
-		; Msgbox, % "The icon width must be: " sz.w  "`nThe icon height must be: " sz.h
-		SysGet, SM_CXICON, 11
-		SysGet, SM_CYICON, 12
-		return {w:SM_CXICON, h:SM_CYICON}
-	}
 	;
 	; End user methods
 	;
@@ -330,20 +491,74 @@
 		if InStr( 	  ",showButton,hideButton,setButtonIcon,enableButton,disableButton"
 					. ",setButtonToolTip,dismissPreviewOnButtonClick,removeButtonBackground"
 					. ",reAddButtonBackground,setButtonNonInteractive,setButtonInteractive,", "," . fn . ",") {
-			if this.isFreed
-				throw Exception("This interface has freed its memory, it cannot be used.",-1) 					; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
-			this.verifyiId(p[1])
+			if this.isFreed {
+				this.lastError:=Exception("This interface has freed its memory, it cannot be used.",-1) 
+				if this.mute
+					Exit
+				else
+					throw this.lastError					; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
+			}
+			this.verifyId(p[1])
 		}
 	}
 	__Delete(){
-		msgbox, hi debug
+		if this.arrayIsEmpty(taskbarInterface.allInterfaces)		; If the last interface is released, release com.
+			taskbarInterface.clearInterface()
 		return
 	}
-	verifyiId(iId){
+	arrayIsEmpty(arr){
+		return !arr._NewEnum().next()
+	}
+	; Internal methods for flashtaskbaricon():
+	; flashOn(), flashOff()
+	flashOn(type,flashTime,offTime){
+		this.SetProgressType(type)									; Set progresstype according to color choise
+		this.setProgress(100)										; Set 100 progress to fill taskbar icon with the color
+		fn:=ObjBindMethod(this,"flashOff",type,flashTime,offTime)	; Make a timer for turning off the color
+		this.flashTimer:=fn											;
+		SetTimer, % fn, % -flashTime								;	
+		return
+	}
+	flashOff(type,flashTime,offTime){
+		this.SetProgressType("Off")									; Turn off the progress/color
+		if !(--this.flashesRemaining)								; Decrement flash count, return if appropriate
+			return this.flashTimer:=""
+		fn:=ObjBindMethod(this,"flashOn",type,flashTime,offTime)	; Make a timer for turning on the color
+		this.flashTimer:=fn											;
+		SetTimer, % fn, % -offTime									;
+		return
+	}
+	stopTimer(){
+		; Terminates the flashTimer when appropriate. 
+		; Typically from refreshButtons() or clear()
+		if this.flashTimer {
+			fn:=this.flashTimer
+			SetTimer, % fn, Delete
+			this.flashTimer:=""
+			this.flashParams:=""
+			this.progressValue:=""
+			this.progessType:=""
+		}
+		return
+	}
+	; End internal methods for flashTaskbarIcon()
+	freeMemory(){
+		if this.THUMBBUTTON
+			this.GlobalFree(this.THUMBBUTTON)
+		this.isFreed:=true, this.THUMBBUTTON:=""
+		return
+	}
+	verifyId(iId){
 	; Ensures the button number iId, is in the correct range.
 	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
-		if (iId<1 || iId>7 || round(iId)!=iId)
-			throw Exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
+	; This is called when appropriate form __Call()
+		if (iId<1 || iId>7 || round(iId)!=iId) {
+			this.lastError:=Exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
 		return 1
 	}
 	createButtons(){
@@ -351,6 +566,13 @@
 		; All buttons will have the THB_FLAGS mask.
 		static THB_FLAGS:=0x00000008
 		static THBF_HIDDEN:=0x8
+		if this.THUMBBUTTON {
+			this.lastError:=Exception("Buttons already created, clear this instance or make a refresh")
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
 		this.THUMBBUTTON:=this.GlobalAlloc(this.thumbButtonSize*7)
 		
 		loop, 7 {
@@ -359,12 +581,16 @@
 			this.updateThumbButtonMask(A_Index,THB_FLAGS,0)								; update the mask: THB_FLAGS
 			this.updateThumbButtonFlags(A_Index,THBF_HIDDEN,0)							; Update flag: THBF_HIDDEN:=0x8
 		}
-		return this.ThumbBarAddButtons()
+		this.ThumbBarAddButtons()
+		if this.hookUnhide
+			this.SetWinEventHook()	; Enable hook if not on.
+		return
 	}
 
 	; Update/get/set methods for the THUMBBUTTON struct array.
-	; The update functions call the get functions, modifies the values and then set. The caller of update() then calls ThumbBarUpdateButtons() when finished
-	
+	; The update functions call the get functions, modifies the values and then set.
+	; The caller of update() then calls ThumbBarUpdateButtons() when finished
+
 	; Update
 	updateThumbButtonMask(iId,add:=0,remove:=0){
 		dwMask:=(this.getThumbButtonMask(iId)|add)^remove
@@ -418,19 +644,19 @@
 		return taskbarInterface.ThumbBarAddButtonsFn.Call("Ptr", this.hWnd, "Uint", 7, "Ptr", this.THUMBBUTTON) ; return 0 is ok!
 	}
 	
-	ThumbBarUpdateButtons(iId){
-		return taskbarInterface.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
+	ThumbBarUpdateButtons(iId,n:=1){
+		return taskbarInterface.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1*n, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
 	}
 	
 	_setThumbnailToolTip(){
 		return taskbarInterface.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
 	}
 	
-	setProgressState(type){
-		return taskbarInterface.SetProgressStateFn.Call("Ptr", this.hWnd, "Uint", type)
+	setProgressState(){
+		return taskbarInterface.SetProgressStateFn.Call("Ptr", this.hWnd, "Uint", this.progressType)
 	}
-	setProgressValue(progress){
-		return taskbarInterface.SetProgressValueFn.Call("Ptr", this.hWnd, "Int64", progress, "Int64", 100) ; 100 is max progress (done)
+	setProgressValue(){
+		return taskbarInterface.SetProgressValueFn.Call("Ptr", this.hWnd, "Int64", this.progressValue, "Int64", 100) ; 100 is max progress (done)
 	}
 	_setOverlayIcon(){
 		return taskbarInterface.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription) 
@@ -462,7 +688,7 @@
 	;																		Sum: 32-bit: 4+4+4+0+A_PtrSize+260*2+4=544, 544/A_PtrSize=136, no spacing needed.
 	;																		Sum: 64-bit: 4+4+4+4+A_PtrSize+260*2+4=548, 548/A_PtrSize=68.5 -> add 4 bytes, 552/A_PtrSize=69 (mod(552,A_Ptrsize)=0).
 	;																		64-bit: add 4 bytes spacing to next struct in array
-	;																		Conclusion: size:= A_PtrSize=4?544:552
+	;																		Summary: size:= A_PtrSize=4?544:552
 	
 	*/
 	;
@@ -473,18 +699,25 @@
 	; 			<	>	<	>	<	>	<	>	<	>	<	>													<	>	<	>	<	>	<	>	<	>	<	>
 	;
 	;
-	initCom(){
+	initInterface(){
 		; Url:
 		;	-  https://msdn.microsoft.com/en-us/library/windows/desktop/bb774652(v=vs.85).aspx (ITaskbarList interface)
 		; Initilises the com object.
 		static CLSID_TaskbarList := "{56FDF344-FD6D-11d0-958A-006097C9A090}"
 		static IID_ITaskbarList3 := "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
 		this.hComObj := ComObjCreate(CLSID_TaskbarList, IID_ITaskbarList3)
+		if !this.hComObj {
+			this.lastError:=Exception("ComObjCreate failed",-2)
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
 		; Get the address to the vTable.
-		this.vTable:=NumGet(this.hComObj+0)
+		this.vTable:=NumGet(this.hComObj+0,0,"Ptr")
 		; Create function objects for the interface, for convenience and clarity
 																																								; Name:					 Number:
-		this.ReleaseFn:=Func("DllCall").Bind(NumGet(this.vTable+2*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)														; Release					( 2)
+																																								
 		this.HrInitFn:=Func("DllCall").Bind(NumGet(this.vTable+3*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)														; HrInit					( 3)
 		
 		this.SetProgressValueFn:=Func("DllCall").Bind(NumGet(this.vTable+9*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetProgressValue			( 9)
@@ -494,12 +727,152 @@
 		this.SetOverlayIconFn:=Func("DllCall").Bind(NumGet(this.vTable+18*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetOverlayIcon			(18)
 		this.ThumbnailToolTipFn:=Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)											; SetThumbnailTooltip		(19)
 		this.ThumbnailClipFn:=Func("DllCall").Bind(NumGet(this.vTable+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)												; SetThumbnailClip			(20)
-		this.HrInitFn.Call()
+		hr:=this.HrInitFn.Call()
+		if hr {
+			this.lastError:=Exception("Com failed to initialise.",-2)
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
+		this.CoInitialize()
 		this.init:=1
 		return	
 	}
+	clearInterface(){
+		this.turnOffButtonMessages()
+		hr := ObjRelease(this.hComObj)
+		if hr {
+			this.lastError:=Exception("Com realease failed",-2)
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
+		; Clear some variables beacuse they shouldn't be used from now on.
+		this.HrInitFn:=""
+		this.SetProgressValueFn:=""
+		this.SetProgressStateFn:=""
+		this.ThumbBarAddButtonsFn:=""
+		this.ThumbBarUpdateButtonsFn:=""
+		this.SetOverlayIconFn:=""
+		this.ThumbnailToolTipFn:=""
+		this.ThumbnailClipFn:=""
+
+		this.hComObj:=""
+		this.vTable:=""
+		this.init:=0				; Indicate com is not initialised
+		if this.CoInitialised
+			this.CoUnInitialize()
+		if this.hHook
+			this.UnhookWinEvent()
+		return hr					; returns 0 on success (released)
+		
+	}
 	
-	; Click on button handling:
+	; CoInitialize/CoUnInitialize
+	; Url:
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms678543(v=vs.85).aspx (CoInitialize function)
+	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms688715(v=vs.85).aspx (CoUninitialize function)
+	CoInitialize(){
+		static S_OK:=0		; The COM library was initialized successfully on this thread.
+		static S_FALSE:=1	; The COM library is already initialized on this thread.
+		hr:=DllCall("Ole32.dll\CoInitialize","Int",0)
+		if (hr == S_FALSE)
+			this.CoUnInitialize(false)
+		else if (hr == S_OK)
+			this.CoInitialised:=true
+		return
+	}
+	CoUnInitialize(count:=true){
+		DllCall("Ole32.dll\CoUninitialize")
+		if count
+			this.CoInitialised:=false
+		return
+	}
+	; Hook functions
+	/*
+	SetWinEventHook function
+	Url:
+		- https://msdn.microsoft.com/en-us/library/windows/desktop/dd373640(v=vs.85).aspx
+	Sets an event hook function for a range of events.
+	HWINEVENTHOOK WINAPI SetWinEventHook(
+	  _In_ UINT         eventMin,
+	  _In_ UINT         eventMax,
+	  _In_ HMODULE      hmodWinEventProc,
+	  _In_ WINEVENTPROC lpfnWinEventProc,
+	  _In_ DWORD        idProcess,
+	  _In_ DWORD        idThread,
+	  _In_ UINT         dwflags
+	)
+	EVENT_OBJECT_UNCLOAKED:=0x8018 ; For future reference
+	EVENT_OBJECT_SHOW:=0x8002
+	EVENT_OBJECT_HIDE:=0x8003
+	*/
+	SetWinEventHook(){
+		;static min:=0x00000001, max:=0x7FFFFFFF
+		static EVENT_OBJECT_SHOW:=0x8002
+		static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
+		if this.hHook
+			return
+		this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
+		;this.CoInitialize() ; Currently called in initInterface().
+		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", EVENT_OBJECT_SHOW, "Uint", EVENT_OBJECT_SHOW, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
+		if !this.hHook {
+			this.lastError:=Exception("SetWinEventHook failed",-1)
+			if this.mute
+				return
+			else
+				throw this.lastError
+		}
+		return
+	}
+	UnhookWinEvent(){
+		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook){
+			this.lastError:=Exception("UnhookWinEvent failed",-1)
+			if this.mute
+				return
+			else
+				throw this.lastError
+		}
+		this.GlobalFree(this.WinEventProcFn) ; Free callback function after hook is removed.
+		return
+	}
+	WinEventProc(params*) {
+		;(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime)
+		/*
+		Url:
+			- https://msdn.microsoft.com/en-us/library/windows/desktop/dd373885(v=vs.85).aspx (WinEventProc callback function)
+		void CALLBACK WinEventProc(
+		   HWINEVENTHOOK hWinEventHook,
+		   DWORD         event,
+		   HWND          hwnd,
+		   LONG          idObject,
+		   LONG          idChild,
+		   DWORD         dwEventThread,
+		   DWORD         dwmsEventTime
+		);
+		*/
+		hWinEventHook	:=	NumGet(params+0,  -A_PtrSize, "Ptr" )
+		,event			:=	NumGet(params+0,		   0, "Uint")
+		,hwnd			:=	NumGet(params+0,   A_PtrSize, "Ptr" )
+		,idObject		:=	NumGet(params+0, 2*A_PtrSize, "Int" )
+		,idChild		:=	NumGet(params+0, 3*A_PtrSize, "Int" )
+		,dwEventThread	:=	NumGet(params+0, 4*A_PtrSize, "Uint")
+		,dwmsEventTime	:=	NumGet(params+0, 5*A_PtrSize, "Uint")
+		for i, interface in taskbarInterface.allInterfaces
+			if (interface.hwnd == hwnd)				
+				return interface.refreshButtons()
+		return
+	}
+	
+	; doNothing() for doNothingFn, used when refreshButtons.
+	doNothing(){
+		return
+	}
+	static doNothingFn:=ObjBindMethod(taskbarInterface, "doNothing")
+	
+	; Click on button message handling:
 	; URL:
 	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391703(v=vs.85).aspx (ITaskbarList3::ThumbBarAddButtons method, remarks)
 	;		When a button in a thumbnail toolbar is clicked, the window associated with that thumbnail is sent a WM_COMMAND
@@ -508,14 +881,14 @@
 	turnOffButtonMessages(){
 		static WM_COMMAND := 0x111
 		if this.buttonMessageFn
-			OnMessage(WM_COMMAND,this.buttonMessageFn,0)					; Turn off button message monitoring. 
-		return
+			OnMessage(WM_COMMAND,this.buttonMessageFn,0)				;	Turn off button message monitoring. 
+		return this.buttonMessageFn:=""
 	}
 	turnOnButtonMessages(){
 		static WM_COMMAND := 0x111
 		if !this.buttonMessageFn
-			this.buttonMessageFn:=ObjBindMethod(this,"onButtonClick")	; The monitor function is kept for 
-		OnMessage(WM_COMMAND,this.buttonMessageFn) 						; When the buttons are clicked, a WM_COMMAND message is sent.
+			this.buttonMessageFn:=ObjBindMethod(this,"onButtonClick")	;	The monitor function is kept for 
+		OnMessage(WM_COMMAND,this.buttonMessageFn) 						;	When the buttons are clicked, a WM_COMMAND message is sent.
 		return
 	}
 	onButtonClick(wParam,lParam,msg,hWnd){
@@ -524,37 +897,285 @@
 		static THBN_CLICKED := 0x1800
 		Critical, On
 		if (wParam >> 16 = THBN_CLICKED) && taskbarInterface.allInterfaces.HasKey(hWnd) {
-			ref:=taskbarInterface.allInterfaces[hWnd] 				;	The reference to the interface whose button was clicked
-			if ref.isDisabled
+			ref:=taskbarInterface.allInterfaces[hWnd] 					;	The reference to the interface whose button was clicked
+			if (ref.isDisabled || !ref.callback)						;	If the reference is disabled of has no callback function. Return.
 				return 1
 			buttonNumber:= wParam&0xffff
-			tf:=ref.callback.Bind(buttonNumber,ref) 				;	The callback includes the button number and a reference to the interface.
-			SetTimer, % tf, -1										;	The call is delayed until this function has returned.
-			return 1												;	No further handling of this message is needed, asumption.
+			tf:=ref.callback.Bind(buttonNumber,ref) 					;	The callback includes the button number and a reference to the interface.
+			SetTimer, % tf, -1											;	The call is delayed until this function has returned.
+			return 1													;	No further handling of this message is needed, asumption.
 		}
+		return
+	}
+	; Custom preview message handling
+	WM_DWMSENDICONICTHUMBNAIL(wParam, lParam, msg, hWnd) {
+		;	Instructs a window to provide a static bitmap to use as a thumbnail representation of that window
+		;	DWM sends this message to a window if all of the following situations are true:
+		;		- DWM is displaying an iconic representation of the window.
+		;		- The DWMWA_HAS_ICONIC_BITMAP attribute is set on the window.
+		;		- The window did not set a cached bitmap.
+		;		- There is room in the cache for another bitmap.
+		;	Url:
+		;		https://msdn.microsoft.com/en-us/library/windows/desktop/dd938875(v=vs.85).aspx
+		;	Notes:
+		; 		Requested size of thumbnail, can be smaller, not bigger
+		Critical, On
+		
+		ref:=taskbarInterface.allInterfaces[hWnd]
+		if !ref
+			return
+		w:= lParam >> 16, h:= lParam & 0xFFFF																	; Get the max width and height of the bitmap
+		if (ref.saveThumbBitmap && ref.thumbHbm) || (ref.thumbHbm && A_TickCount-ref.pThumbTic<ref.thumbrate)
+			return this.Dwm_SetIconicThumbnail(hWnd,ref.thumbHbm,false,ref.dwSITFlagsThumbnailPreview)			; Set the old bitmap																					
+		if (ref.thumbHbm && this.deleteBMPThumbnailPreview)
+			this.freeBitmap(ref.thumbHbm), ref.thumbHbm:=""
+		ref.thumbHbm:=ref.bitmapFunc.call(w,h,ref)																; Call the bitmapFunc to get the new bitmap
+		if !ref.thumbHbm
+			return
+		this.Dwm_SetIconicThumbnail(hWnd,ref.thumbHbm, false,ref.dwSITFlagsThumbnailPreview)					; Set the new bitmap
+		if !ref.thumbrate																						; If rate is 0, the bitmap will not be invalidated, no more calls here will be made.
+			return			
+		ref.pThumbTic:=A_TickCount
+		tf:=ref.invalidateThumbTimerFn:=ObjBindMethod(ref,"InvalidateIconicBitmaps")							; The bitmap will be invalidated after rate ms.
+		SetTimer, % tf, % -abs(ref.thumbrate)
+		return
+	}
+	WM_DWMSENDICONICLIVEPREVIEWBITMAP(wParam, lParam, msg, hwnd){
+		;	Instructs a window to provide a static bitmap to use as a live preview (also known as a Peek preview) of that window.
+		;	Desktop Window Manager (DWM) sends this message to a window if all of the following situations are true:
+		;		- Live preview has been invoked on the window.
+		;		- The DWMWA_HAS_ICONIC_BITMAP attribute is set on the window.
+		;		- An iconic representation is the only one that exists for this window.
+		;	wParam,lParam not used.
+		; 	
+		;	Url:
+		;		https://msdn.microsoft.com/en-us/library/windows/desktop/dd938874(v=vs.85).aspx
+		;
+		;	Notes: The size of the bitmap should (perhaps must) fit the client rectangle.
+		;
+		Critical, On
+		
+		ref:=taskbarInterface.allInterfaces[hWnd]
+		if !ref
+			return
+		this.GetClientRect(hwnd,w,h)																							; Get the max width and height of the bitmap
+		if (ref.savePeekBitmap && ref.peekHbm) || (ref.peekHbm && A_TickCount-ref.ppeekTic<ref.peekrate)
+			return this.Dwm_SetIconicLivePreviewBitmap(hWnd,ref.peekHbm,ref.peekX,ref.peekY, false,ref.dwSITFlagsPeekPreview)	; Set the new bitmap
+		if (ref.peekHbm && ref.deleteBMPPeekPreview)
+			this.freeBitmap(ref.peekHbm), ref.peekHbm:=""
+		ref.peekhbm:=ref.peekbitmapFunc.call(w,h,ref)																			; Call the bitmapFunc to get the new bitmap
+		if !ref.peekhbm
+			return
+		this.Dwm_SetIconicLivePreviewBitmap(hWnd,ref.peekhbm,ref.peekX,ref.peekY,false,ref.dwSITFlagsPeekPreview)				; Set the new bitmap
+		if !ref.peekrate																										; If rate is 0, the bitmap will not be invalidated, no more calls here will be made.
+			return
+		ref.ppeekTic:=A_TickCount
+		tf:=ref.invalidatePeekTimerFn:=ObjBindMethod(ref,"InvalidateIconicBitmaps")												; The bitmap will be invalidated after rate ms.
+		SetTimer, % tf, % -abs(ref.peekrate)
+		return
+	}
+	
+	InvalidateIconicBitmaps(){
+		this.invalidateTimerFn:=""
+		this.Dwm_InvalidateIconicBitmaps(this.hWnd)
 		return
 	}
 	;	NOTE: End context: this=taskbarInterface
 	; 		
 	;
-	; Memory allocation methods.
+	
+	; DWM library
+	Dwm_SetWindowAttributeHasIconicBitmap(hwnd,onOff){
+		;	DWMWA_HAS_ICONIC_BITMAP=10
+		;	Use with DwmSetWindowAttribute. The window will provide a bitmap for use by DWM as an iconic thumbnail or peek representation
+		;	(a static bitmap) for the window. DWMWA_HAS_ICONIC_BITMAP can be specified with DWMWA_FORCE_ICONIC_REPRESENTATION.
+		;	DWMWA_HAS_ICONIC_BITMAP normally is set during a window's creation and not changed throughout the window's lifetime.
+		;	Some scenarios, however, might require the value to change over time. The pvAttribute parameter points to a value of TRUE
+		;	to inform DWM that the window will provide an iconic thumbnail or peek representation; otherwise, it points to FALSE.
+		;	Windows Vista and earlier:  This value is not supported.
+		;
+		static dwAttribute:=10
+		static cbAttribute:=4
+		VarSetCapacity(pvAttribute,4,0)
+		NumPut(onOff,pvAttribute,0,"Int")
+		hr:=DllCall("Dwmapi.dll\DwmSetWindowAttribute", "Ptr", hwnd, "Uint", dwAttribute, "Ptr", &pvAttribute, "Uint", cbAttribute)
+		return hr
+	}
+	Dwm_SetWindowAttributeForceIconicRepresentaion(hwnd,onOff){
+		;
+		;	DWMWA_FORCE_ICONIC_REPRESENTATION=7
+		;	Use with DwmSetWindowAttribute. Forces the window to display an iconic thumbnail or peek representation (a static bitmap),
+		;	even if a live or snapshot representation of the window is available. This value normally is set during a window's creation 
+		;	and not changed throughout the window's lifetime. Some scenarios, however, might require the value to change over time.
+		;	The pvAttribute parameter points to a value of TRUE to require a iconic thumbnail or peek representation; otherwise, it points to FALSE.
+		;
+		dwAttribute:=7
+		cbAttribute:=4
+		VarSetCapacity(pvAttribute,4,0)
+		NumPut(onOff,pvAttribute,0,"Int")
+		hr:=DllCall("Dwmapi.dll\DwmSetWindowAttribute", "Ptr", hwnd, "Uint", dwAttribute, "Ptr", &pvAttribute, "Uint", cbAttribute)
+		return hr
+	}
+	Dwm_SetWindowAttributeDisallowPeek(hwnd,disallow:=1){
+		;
+		;	DWMWA_DISALLOW_PEEK=11
+		;	Do not show peek preview for the window. The peek view shows a full-sized preview of the window when the mouse hovers over the window's thumbnail in the taskbar.
+		;	If this attribute is set, hovering the mouse pointer over the window's thumbnail dismisses peek (in case another window in the group has a peek preview showing).
+		;	The pvAttribute parameter points to a value of TRUE to prevent peek functionality or FALSE to allow it.
+		;	Windows Vista and earlier:  This value is not supported.
+		;	Input:
+		;			disallow, 1 to disallow peek preview, 0 to allow
+		;	Output:
+		;			hresult, error msg. 0 is ok!
+		;	Url:
+		;			https://msdn.microsoft.com/en-us/library/windows/desktop/aa969530(v=vs.85).aspx - DWMWINDOWATTRIBUTE enumeration
+
+		dwAttribute:=11
+		cbAttribute:=4
+		VarSetCapacity(pvAttribute,4,0)
+		NumPut(disallow,pvAttribute,0,"Int")
+		hr:=DllCall("Dwmapi.dll\DwmSetWindowAttribute", "Ptr", hwnd, "Uint", dwAttribute, "Ptr", &pvAttribute, "Uint", cbAttribute)
+		return hr ; 0 is ok!
+	}
+	Dwm_SetWindowAttributeExcludeFromPeek(hwnd,exclude:=1){
+		;
+		;	DWMWA_EXCLUDED_FROM_PEEK=12
+		;	Use with DwmSetWindowAttribute. Prevents a window from fading to a glass sheet when peek is invoked.
+		;	The pvAttribute parameter points to a value of TRUE to prevent the window from fading during another window's peek or FALSE for normal behavior.
+		;	Windows Vista and earlier:  This value is not supported.
+		;	Input:
+		;			exclude, 1 to prevent window from fading to a glass sheet when peek is invoked, 0 from normal behavior
+		;	Output:
+		;			hresult, error msg. 0 is ok!
+		;	Url:
+		;			https://msdn.microsoft.com/en-us/library/windows/desktop/aa969530(v=vs.85).aspx - DWMWINDOWATTRIBUTE enumeration
+
+		dwAttribute:=12
+		cbAttribute:=4
+		VarSetCapacity(pvAttribute,4,0)
+		NumPut(exclude,pvAttribute,0,"Int")
+		hr:=DllCall("Dwmapi.dll\DwmSetWindowAttribute", "Ptr", hwnd, "Uint", dwAttribute, "Ptr", &pvAttribute, "Uint", cbAttribute)
+		return hr ; 0 is ok!
+	}
+	;	Note, the deleteBMP function is not used here, but it is handled in the message functions, clear() and disableCustomXPreview
+	Dwm_SetIconicThumbnail(hwnd,hBITMAP,deleteBMP:=true,dwSITFlags:=0){
+		;	Sets a static, iconic bitmap on a window or tab to use as a thumbnail representation.
+		;	The taskbar can use this bitmap as a thumbnail switch target for the window or tab.
+		;
+		;	Input:
+		;			hwnd, A handle to the window or tab. This window must belong to the calling process.
+		;			hBITMAP, A handle to the bitmap to represent the window that hwnd specifies.
+		;			deleteBMP, option to delete the bitmap after it's been set as thumbnail, 1 - delete, 0 - don't delete.
+		;			dwSITFlags, The display options for the thumbnail. One of the following values:
+		;						0, No frame is displayed around the provided thumbnail.
+		;						1, Displays a frame around the provided thumbnail.		
+		; 	Output:
+		;			hr, if this function succeeds, it returns S_OK. Otherwise, it returns an HRESULT error code.
+		;	Url:
+		;			https://msdn.microsoft.com/en-us/library/windows/desktop/dd389411(v=vs.85).aspx
+		;	Notes:
+		;			The bitmap must not be bigger than the requested size from DWM, the requested size is in x=HIWORD(lParam) (sic!), y=LOWORD(lParam) (sic!) from WM_DWMSENDICONICTHUMBNAIL=0x0323.
+		;			Yes, the x,y are unconventinally stored in lParam. See example message monitor functions.
+		
+		hr:=DllCall("Dwmapi.dll\DwmSetIconicThumbnail", "Ptr", hwnd, "Ptr", hBITMAP, "Uint", dwSITFlags)
+		; Clean up
+		if deleteBMP
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", hBITMAP)
+		return hr ; 0 is ok.
+	}
+	Dwm_SetIconicLivePreviewBitmap(hwnd,hBITMAP,x:="",y:="",deleteBMP:=true,dwSITFlags:=0){
+		;	Sets a static, iconic bitmap to display a live preview (also known as a Peek preview) of a window or tab.
+		;	The taskbar can use this bitmap to show a full-sized preview of a window or tab.
+		;
+		;	Input:
+		;			hwnd, A handle to the window or tab. This window must belong to the calling process.
+		;			hBITMAP, A handle to the bitmap to represent the window that hwnd specifies.
+		;			x,y, The offset of a tab window's client region (the content area inside the client window frame) from the host window's frame.
+		;				 This offset enables the tab window's contents to be drawn correctly in a live preview when it is drawn without its frame.
+		;			deleteBMP, option to delete the bitmap after it's been set as thumbnail, 1 - delete, 0 - don't delete. DWM doesn't need it after it's been set, so delete if you don't need it anymore.
+		;			dwSITFlags, The display options for the thumbnail. One of the following values:
+		;						0, No frame is displayed around the provided thumbnail.
+		;						1, Displays a frame around the provided thumbnail.		
+		; 	Output:
+		;			hr, if this function succeeds, it returns S_OK. Otherwise, it returns an HRESULT error code.
+		;	Url:
+		;			https://msdn.microsoft.com/en-us/library/windows/desktop/dd389410(v=vs.85).aspx
+		;	Notes:
+		;			The size of the bitmap should (perhaps must) fit the (hwnds) client rectangle.
+		
+		; offset point from x,y
+		if (x="" || y="") {
+			ppt:=0
+		} else {
+			VarSetCapacity(pt,8,0)
+			NumPut(x,pt,0,"Int")
+			NumPut(y,pt,4,"Int")
+			ppt:=&pt
+		}
+		hr:=DllCall("Dwmapi.dll\DwmSetIconicLivePreviewBitmap", "Ptr", hwnd, "Ptr", hBITMAP, "Ptr", ppt, "Uint", dwSITFlags)
+		; Clean up
+		if deleteBMP
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", hBITMAP)
+		return hr ; 0 is ok.
+	}
+	Dwm_InvalidateIconicBitmaps(hwnd){
+		;	Called by an application to indicate that all previously provided iconic bitmaps from a window,
+		;	both thumbnails and peek representations, should be refreshed.
+		;
+		;	Input:
+		;			hwnd, A handle to the window or tab whose bitmaps are being invalidated through this call. 
+		;				  This window must belong to the calling process.
+		; 	Output:
+		;			hr, if this function succeeds, it returns S_OK. Otherwise, it returns an HRESULT error code.
+		;	Url:
+		;			https://msdn.microsoft.com/en-us/library/windows/desktop/dd389409(v=vs.85).aspx - DwmInvalidateIconicBitmaps function
+		return DllCall("Dwmapi.dll\DwmInvalidateIconicBitmaps", "Ptr", hwnd) ; 0 is ok
+	}
+	; Memory allocation/free methods.
 	GlobalAlloc(dwBytes){
 		; URL:
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/aa366574(v=vs.85).aspx (GlobalAlloc function)
 		static GMEM_ZEROINIT:=0x0040	; Zero fill memory
 		static uFlags:=GMEM_ZEROINIT	; For clarity.
 		h:=DllCall("Kernel32.dll\GlobalAlloc", "Uint", uFlags, "Ptr", dwBytes, "Ptr")
-		if !h
-			throw Exception("Memory alloc failed.",-1)
+		if !h {
+			this.lastError:=Exception("Memory alloc failed.",-1)
+			if this.mute
+				Exit
+			else
+				throw this.lastError
+		}
+		
 		return h
 	}
 	GlobalFree(hMem){
 		; URL:
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/aa366579(v=vs.85).aspx (GlobalFree function)
 		h:=DllCall("Kernel32.dll\GlobalFree", "Ptr", hMem, "Ptr")
-		if h
-			throw Exception("Memory free failed",-1)
+		if h {
+			this.lastError:=Exception("Memory free failed",-1)
+			if this.mute
+				return
+			else
+				throw this.lastError
+		}
 		return h
+	}
+	freeBitmap(hbm){
+		return DllCall("Gdi32.dll\DeleteObject", "Ptr", hbm)
+	}
+	; Misc:
+	GetClientRect(hwnd,ByRef X2, ByRef Y2){
+		VarSetCapacity(rc,16)
+		DllCall("GetClientRect", "Ptr", hwnd, "Ptr", &rc)
+		X2:=NumGet(rc,8,"Int")
+		Y2:=NumGet(rc,12,"Int")
+	}
+	ProcessExist() { ; Used by SetWinEventHook(). Note: In v2 ProcessExist() is built-in, remove this then.
+		return DllCall("GetCurrentProcessId")
+	}
+	min(x,y){
+		return (x<y)*x+(y<=x)*y
 	}
 	; Additional reference:
 	; ShObjIdl.h:
