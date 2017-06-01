@@ -1,6 +1,4 @@
-﻿; TODO:
-; 		Call callback funcs in new thread to avoid user exceptions interupting the interface routines.
-#include ../../classes/threadFunc/threadFunc.ahk
+﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
 	static hookWindowClose:=true	; Use SetWinEventHook to automatically clear the interface when its window is destroyed.
 	static allDisabled:=true 		; All message monitor is disabled before any objects has been derived from this class.
