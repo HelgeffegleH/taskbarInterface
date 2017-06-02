@@ -15,28 +15,22 @@ class taskbarInterface {
 		}
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
 		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
-		if onButtonClickFunction							; Optional
-			this.callback:= new threadFunc(onButtonClickFunction,,,,mute)	; Pass a func object or function name.
+		this.setButtonCallback(onButtonClickFunction)
 		if !taskbarInterface.init							; On first call here, initialise the com object and turn on button messages. (WM_COMMAND)
 			taskbarInterface.initInterface()
-		if this.callback {
-			this.createButtons()							; Create the buttons for this interface.
-			taskbarInterface.restartAllButtonMonitor()		; If monitoring is off, turn on.
-		}
-		this.isDisabled:=false								; By deafault, the interface is not disabled, us stopThisButtonMonitor() to disable.
+		if taskbarInterface.hookWindowClose
+			this.allowHooking:=true
 	}
 	; Context: this = "new taskbarInterface(...)"
 	; Note, further down the context switches to this=taskbarInterface, for convenience. The switch is clearly marked.
-	; User methods.
 	;
-	; 
+	; User methods.
 	;
 	; Button methods,
 	;	Creates a toolbar with up to seven buttons,
 	;	thee toolbar itself cannot be removed without re-creating the window itself.
 	;
 	;	- in the following n is the button number, n ∈ [1,7]⊂ℤ
-	
 	showButton(n){
 		; Show button n
 		static THBF_HIDDEN:=0x8
@@ -125,6 +119,20 @@ class taskbarInterface {
 		static THBF_NONINTERACTIVE  := 0x10
 		this.updateThumbButtonFlags(n,0,THBF_NONINTERACTIVE)			; Update flag, remove THBF_NONINTERACTIVE:=0x10
 		return this.ThumbBarUpdateButtons(n)							; Update
+	}
+	setButtonCallback(onButtonClickFunction:=""){
+		; For changing or specifying the onButtonClick callback function.
+		if onButtonClickFunction {		
+			this.callback:= new threadFunc(onButtonClickFunction,,,,this.mute)	; Pass a func / bound func object or function name.
+		} else {
+			this.callback:=""
+			return this.stopThisButtonMonitor()
+		}
+		if !this.THUMBBUTTON
+			this.createButtons()							; Create the buttons for this interface.
+		taskbarInterface.restartAllButtonMonitor()			; If monitoring is off, turn on.
+		this.isDisabled:=false								; By default, the interface is not disabled, us stopThisButtonMonitor() to disable.
+		return 
 	}
 	;
 	; End Button methods
@@ -473,6 +481,12 @@ class taskbarInterface {
 		; Default is message monitoring on
 		return this.isDisabled:=false
 	}
+	exemptFromHook(){
+		return this.allowHooking:=false
+	}
+	unexemptFromHook(){
+		return this.allowHooking:=true
+	}
 	getLastError(){
 		; Returns the last error object from exception(...)
 		return this.lastError
@@ -529,7 +543,10 @@ class taskbarInterface {
 					return this.lastError
 				else
 					throw this.lastError					; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
+			} else if !this.THUMBBUTTON {
+				this.createButtons()
 			}
+			
 			this.verifyId(p[1])
 		}
 	}
@@ -590,7 +607,7 @@ class taskbarInterface {
 		if (iId<1 || iId>7 || round(iId)!=iId) {
 			this.lastError:=Exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
 			if this.mute
-				return this.lastError
+				Exit
 			else
 				throw this.lastError
 		}
@@ -810,6 +827,7 @@ class taskbarInterface {
 		return	
 	}
 	clearInterface(){
+		local hr
 		this.turnOffButtonMessages()
 		hr := ObjRelease(this.hComObj)
 		if hr {
@@ -892,28 +910,28 @@ class taskbarInterface {
 	  _In_ DWORD        idThread,
 	  _In_ UINT         dwflags
 	)
-	EVENT_OBJECT_UNCLOAKED:=0x8018 ; For future reference
+	; For future reference and debug
+	EVENT_OBJECT_UNCLOAKED:=0x8018 
 	EVENT_OBJECT_SHOW:=0x8002
 	EVENT_OBJECT_HIDE:=0x8003
+	;static min:=0x00000001, max:=0x7FFFFFFF
 	*/
 	SetWinEventHook(){
-	;static min:=0x00000001, max:=0x7FFFFFFF
-	static EVENT_OBJECT_SHOW:=0x8002
-	static EVENT_OBJECT_DESTROY:=0x8001
-	static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
-	if this.hHook
-		return
-	this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
-	;this.CoInitialize() ; Currently called in initInterface().
-	this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", EVENT_OBJECT_DESTROY, "Uint", EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
-	if !this.hHook {
-		this.lastError:=Exception("SetWinEventHook failed",-1)
-		if this.mute
+		static EVENT_OBJECT_DESTROY:=0x8001
+		static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
+		if this.hHook
 			return
-		else
-			throw this.lastError
-	}
-	return
+		this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
+		;this.CoInitialize() ; Currently called in initInterface().
+		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", EVENT_OBJECT_DESTROY, "Uint", EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
+		if !this.hHook {
+			this.lastError:=Exception("SetWinEventHook failed",-1)
+			if this.mute
+				return
+			else
+				throw this.lastError
+		}
+		return
 	}
 	ProcessExist() { ; Used by SetWinEventHook(). Note: In v2 ProcessExist() is built-in, remove this then.
 		return DllCall("GetCurrentProcessId")
@@ -953,7 +971,7 @@ class taskbarInterface {
 		,dwEventThread	:=	NumGet(params+0, 4*A_PtrSize, "Uint")
 		,dwmsEventTime	:=	NumGet(params+0, 5*A_PtrSize, "Uint")
 		for i, interface in taskbarInterface.allInterfaces
-			if (interface.hwnd == hwnd)
+			if (interface.hwnd == hwnd && !interface.allowHooking)
 				return interface.clear()
 		return
 	}
@@ -1094,8 +1112,8 @@ class taskbarInterface {
 		;	and not changed throughout the window's lifetime. Some scenarios, however, might require the value to change over time.
 		;	The pvAttribute parameter points to a value of TRUE to require a iconic thumbnail or peek representation; otherwise, it points to FALSE.
 		;
-		dwAttribute:=7
-		cbAttribute:=4
+		static dwAttribute:=7
+		static cbAttribute:=4
 		local pvAttribute, hr
 		VarSetCapacity(pvAttribute,4,0)
 		NumPut(onOff,pvAttribute,0,"Int")
@@ -1115,7 +1133,6 @@ class taskbarInterface {
 		;			hresult, error msg. 0 is ok!
 		;	Url:
 		;			https://msdn.microsoft.com/en-us/library/windows/desktop/aa969530(v=vs.85).aspx - DWMWINDOWATTRIBUTE enumeration
-		
 		static dwAttribute:=11
 		static cbAttribute:=4
 		local pvAttribute, hr
@@ -1136,7 +1153,6 @@ class taskbarInterface {
 		;			hresult, error msg. 0 is ok!
 		;	Url:
 		;			https://msdn.microsoft.com/en-us/library/windows/desktop/aa969530(v=vs.85).aspx - DWMWINDOWATTRIBUTE enumeration
-		
 		static dwAttribute:=12
 		static cbAttribute:=4
 		local pvAttribute, hr
