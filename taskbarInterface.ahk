@@ -1,23 +1,20 @@
 ﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
-	static hookWindowClose:=true	; Use SetWinEventHook to automatically clear the interface when its window is destroyed.
-	static allDisabled:=true 		; All message monitor is disabled before any objects has been derived from this class.
-	static nCustomPreviews:=0		; Number of custom thumbnail previews enabled. Used for tracking when to turn on / off message handling.
-	static nCustomPeekPreviews:=0	; Number of custom peek previews enabled. Used for tracking when to turn on / off message handling.
+	static hookWindowClose:=true	; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
 			this.lastError:=Exception("There is already an interface for this window.",-1)
 			if mute
-				return this.lastError
+				Exit
 			else
 				throw this.lastError
 		}
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
 		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
-		this.setButtonCallback(onButtonClickFunction)
 		if !taskbarInterface.init							; On first call here, initialise the com object and turn on button messages. (WM_COMMAND)
-			taskbarInterface.initInterface()
+			taskbarInterface.initInterface()				; Note, must init com before any interface functions are called.
+		this.setButtonCallback(onButtonClickFunction)		
 		if taskbarInterface.hookWindowClose
 			this.allowHooking:=true
 	}
@@ -286,6 +283,8 @@ class taskbarInterface {
 		Numput(right,rect,8,"Int"),	Numput(bottom,rect,12,"Int")
 		return this._setThumbnailClip(&rect)
 	}
+	static nCustomPreviews:=0		; Number of custom thumbnail previews enabled. Used for tracking when to turn on / off message handling.
+	static nCustomPeekPreviews:=0	; Number of custom peek previews enabled. Used for tracking when to turn on / off message handling.
 	enableCustomThumbnailPreview(bitmapOrBitmapFunc,rate:=0, autoDeleteBitmap:=true, addBorder:=false){
 		; bitmapOrBitmapFunc,	a bitmap handle or func object that takes three parameters, max width and max height of the bitmap and a reference to the interface.
 		; 						the bitmapFunc should return a bitmap handle to used as thumbnail preview for the interface's window. If passing a bitmap, rate must be 0.
@@ -341,9 +340,7 @@ class taskbarInterface {
 			this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,0)									; Restores the default preview, provided by the OS.
 			this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,0)
 		}
-		if (this.deleteBMPThumbnailPreview && this.thumbHbm)
-			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.thumbHbm)
-		this.thumbHbm:=""
+		this.freeThumbnailPreviewBMP() ; Conditionally
 		return
 	}
 	enableCustomPeekPreview(bitmapOrBitmapFunc,rate:=0,x:="",y:="",autoDeleteBitmap:=true, addBorder:=false){
@@ -405,9 +402,7 @@ class taskbarInterface {
 			this.Dwm_SetWindowAttributeHasIconicBitmap(this.hwnd,0)									; Restores the default preview, provided by the OS.
 			this.Dwm_SetWindowAttributeForceIconicRepresentaion(this.hwnd,0)
 		}
-		if (this.deleteBMPPeekPreview && this.peekHbm)
-			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.peekHbm)
-		this.thumbHbm:=""
+		this.freePeekPreviewBMP() ; Conditionally
 		return
 	}
 	disallowPeek(){	; See dwm lib for details (Dwm_SetWindowAttributeDisallowPeek)
@@ -467,6 +462,9 @@ class taskbarInterface {
 		taskbarInterface.allInterfaces.Delete(this.hWnd)
 		; Free memory
 		this.freeMemory()
+		; Free thumbnail/peek preview bitmaps, if needed
+		this.freeThumbnailPreviewBMP()
+		this.freePeekPreviewBMP()
 		return
 	}
 	stopThisButtonMonitor(){
@@ -514,6 +512,7 @@ class taskbarInterface {
 			interface.clear()
 		return
 	}
+	static allDisabled:=true 		; All message monitor is disabled before any objects has been derived from this class.
 	stopAllButtonMonitor(){
 		; turns off button message monitor, default is on.
 		if taskbarInterface.allDisabled
@@ -543,10 +542,9 @@ class taskbarInterface {
 					return this.lastError
 				else
 					throw this.lastError					; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
-			} else if !this.THUMBBUTTON {
+			} else if (!this.THUMBBUTTON && taskbarInterface.init) {
 				this.createButtons()
 			}
-			
 			this.verifyId(p[1])
 		}
 	}
@@ -599,6 +597,17 @@ class taskbarInterface {
 			this.GlobalFree(this.THUMBBUTTON)
 		this.isFreed:=true, this.THUMBBUTTON:=""
 		return
+	}
+	; Help functions for freeing preview bitmaps, called by clear and disable peek/thumb preview functions
+	freeThumbnailPreviewBMP(){
+		if (this.deleteBMPThumbnailPreview && this.thumbHbm)
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.thumbHbm)
+		return this.thumbHbm:=""
+	}
+	freePeekPreviewBMP(){
+		if (this.deleteBMPPeekPreview && this.peekHbm)
+			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.peekHbm)
+		return this.peekHbm:=""
 	}
 	verifyId(iId){
 	; Ensures the button number iId, is in the correct range.
