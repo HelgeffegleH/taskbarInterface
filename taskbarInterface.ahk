@@ -1,6 +1,7 @@
 ﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
-	static hookWindowClose:=true	; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
+	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
+	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released.
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -136,7 +137,19 @@ class taskbarInterface {
 	;
 	
 	; Misc interface methods:
-	
+	setTaskbarIcon(smallIconHandle,bigIconHandle:=""){
+		; Url:
+		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms632643(v=vs.85).aspx (WM_SETICON message)
+		;	Associates a new large or small icon with a window. The system displays the large icon in the ALT+TAB dialog box, and the small icon in the window caption.
+		static:=WM_SETICON:=0x80,ICON_SMALL:=0,ICON_BIG:=1
+		if !bigIconHandle
+			bigIconHandle:=smallIconHandle
+		this.smallIconHandle:=smallIconHandle
+		this.bigIconHandle:=bigIconHandle
+		SendMessage, WM_SETICON, ICON_SMALL,	smallIconHandle	,, % "ahk_id" this.hWnd
+		SendMessage, WM_SETICON, ICON_BIG, 		bigIconHandle	,, % "ahk_id" this.hWnd
+		return
+	}
 	; setProgress - The underlying function is called SetProgressValue, but
 	;	I think the word Type is more descriptive of its function.
 	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
@@ -458,13 +471,13 @@ class taskbarInterface {
 		; Disable (and free) custom preview bitmaps
 		this.disableCustomThumbnailPreview()
 		this.disableCustomPeekPreview()
-		; Remove from allInterfaces array
-		taskbarInterface.allInterfaces.Delete(this.hWnd)
 		; Free memory
 		this.freeMemory()
 		; Free thumbnail/peek preview bitmaps, if needed
 		this.freeThumbnailPreviewBMP()
 		this.freePeekPreviewBMP()
+		; Remove from allInterfaces array
+		taskbarInterface.allInterfaces.Delete(this.hwnd)
 		return
 	}
 	stopThisButtonMonitor(){
@@ -524,6 +537,29 @@ class taskbarInterface {
 		if taskbarInterface.allDisabled
 			return taskbarInterface.turnOnButtonMessages(), taskbarInterface.allDisabled:=false
 	}
+	static templates:=[] ; Holds all templates
+	static hasTemplates:=0
+	makeTemplate(templateFunction,WinTitle:="",excludeWinTitle:="") {
+		templateFunction := new threadFunc(templateFunction,,,,true)
+		if !templateFunction
+			return Exception("Template function invalid",-1)
+		++taskbarInterface.hasTemplates
+		if !taskbarInterface.init																										; Initialise com and message monitor if needed
+			taskbarInterface.initInterface()
+		WinTitle := IsObject(WinTitle) ? WinTitle : (WinTitle!="" ? StrSplit(WinTitle,",") : "")
+		excludeWinTitle := IsObject(excludeWinTitle) ? excludeWinTitle : (excludeWinTitle!="" ? StrSplit(excludeWinTitle,",") : "")
+		return taskbarInterface.templates.Push({include:WinTitle,exclude:excludeWinTitle,templateFunction:templateFunction})			; Returns the templates position in the template array, pass this number to removeTemplate to remove this template later
+	}
+	removeTemplate(n){
+		if !taskbarInterface.hasTemplates
+			return
+		if !(--taskbarInterface.hasTemplates){
+			taskbarInterface.UnhookWinEvent()		; Unhook EVENT_OBJECT_SHOW
+			if taskbarInterface.hookWindowClose
+				taskbarInterface.SetWinEventHook()	; Restart hook with narrower event range, EVENT_OBJECT_DESTROY -> EVENT_OBJECT_DESTROY
+		}
+		return taskbarInterface.templates.Delete(n)
+	}
 	;
 	; End user methods
 	;
@@ -549,7 +585,7 @@ class taskbarInterface {
 		}
 	}
 	__Delete(){
-		if this.arrayIsEmpty(taskbarInterface.allInterfaces)		; If the last interface is released, release com.
+		if !taskbarInterface.manualClearInterface && taskbarInterface.arrayIsEmpty(taskbarInterface.allInterfaces)		; If the last interface is released, release com.
 			taskbarInterface.clearInterface()
 		return
 	}
@@ -638,7 +674,7 @@ class taskbarInterface {
 		this.THUMBBUTTON:=this.GlobalAlloc(this.thumbButtonSize*7)
 		
 		loop, 7 {
-			local structOffset:=this.thumbButtonSize*(A_Index-1)
+			structOffset:=this.thumbButtonSize*(A_Index-1)
 			NumPut(A_Index,this.THUMBBUTTON+structOffset, 4, "Uint")					; Specify the ids: 1,...,7
 			this.updateThumbButtonMask(A_Index,THB_FLAGS,0)								; update the mask: THB_FLAGS
 			this.updateThumbButtonFlags(A_Index,THBF_HIDDEN,0)							; Update flag: THBF_HIDDEN:=0x8
@@ -652,11 +688,13 @@ class taskbarInterface {
 
 	; Update
 	updateThumbButtonMask(iId,add:=0,remove:=0){
+		local dwMask
 		dwMask:=(this.getThumbButtonMask(iId)|add)^remove
 		return this.setThumbButtonMask(iId,dwMask)
 	}
 	updateThumbButtonFlags(iId,add:=0,remove:=0){
-		dwflags:=(this.getThumbButtonFlags(iId)|add)^remove
+		local dwFlags
+		dwFlags:=(this.getThumbButtonFlags(iId)|add)^remove
 		return this.setThumbButtonFlags(iId,dwFlags)
 	}
 	; Item and struct offsets are specified for maintainabillity
@@ -664,7 +702,7 @@ class taskbarInterface {
 	; Get
 	getThumbButtonMask(iId){
 		static	itemOffset		:=	0																		; dwMask
-		local		structOffset	:=	this.thumbButtonSize*(iId-1)
+		local	structOffset	:=	this.thumbButtonSize*(iId-1)
 		return NumGet(this.THUMBBUTTON+itemOffset+structOffset, "Uint")
 	}
 	getThumbButtonFlags(iId){
@@ -830,8 +868,7 @@ class taskbarInterface {
 		this.taskbarButtonCreatedMsgFn:=ObjBindMethod(this,"taskbarButtonCreatedMsgHandler")	; Monitor this message to automatically restore the interface when needed.
 		OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn)
 		; Hook
-		if (!this.hHook && this.hookWindowClose)
-			this.SetWinEventHook()
+		this.SetWinEventHook()
 		this.init:=1	; Success!
 		return	
 	}
@@ -926,13 +963,17 @@ class taskbarInterface {
 	;static min:=0x00000001, max:=0x7FFFFFFF
 	*/
 	SetWinEventHook(){
+		static EVENT_OBJECT_CREATE:=0x8000
 		static EVENT_OBJECT_DESTROY:=0x8001
+		static EVENT_OBJECT_SHOW:=0x8002
 		static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
 		if this.hHook
+			this.UnhookWinEvent()
+		if !(this.hookWindowClose || this.hasTemplates)
 			return
 		this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
-		;this.CoInitialize() ; Currently called in initInterface().
-		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", EVENT_OBJECT_DESTROY, "Uint", EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
+		this.CoInitialize()
+		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", this.hookWindowClose ? EVENT_OBJECT_DESTROY : EVENT_OBJECT_SHOW, "Uint", this.hasTemplates ? EVENT_OBJECT_SHOW : EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
 		if !this.hHook {
 			this.lastError:=Exception("SetWinEventHook failed",-1)
 			if this.mute
@@ -943,7 +984,9 @@ class taskbarInterface {
 		return
 	}
 	ProcessExist() { ; Used by SetWinEventHook(). Note: In v2 ProcessExist() is built-in, remove this then.
-		return DllCall("GetCurrentProcessId")
+		; Url:
+		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms683180(v=vs.85).aspx (GetCurrentProcessId function)
+		return DllCall("Kernel32.dll\GetCurrentProcessId")
 	}
 	UnhookWinEvent(){
 		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook){
@@ -971,7 +1014,12 @@ class taskbarInterface {
 		   DWORD         dwmsEventTime
 		);
 		*/
-		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,interface ; Awkward.
+		static EVENT_OBJECT_CREATE:=0x8000
+		static EVENT_OBJECT_DESTROY:=0x8001	
+		static EVENT_OBJECT_SHOW:=0x8002	
+		static OBJID_WINDOW:=0
+		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,interface,template,cls ; Awkward.
+		local WinExistIncludeParams,WinExistExcludeParams
 		hWinEventHook	:=	NumGet(params+0,  -A_PtrSize, "Ptr" )
 		,event			:=	NumGet(params+0,		   0, "Uint")
 		,hwnd			:=	NumGet(params+0,   A_PtrSize, "Ptr" )
@@ -979,9 +1027,42 @@ class taskbarInterface {
 		,idChild		:=	NumGet(params+0, 3*A_PtrSize, "Int" )
 		,dwEventThread	:=	NumGet(params+0, 4*A_PtrSize, "Uint")
 		,dwmsEventTime	:=	NumGet(params+0, 5*A_PtrSize, "Uint")
-		for i, interface in taskbarInterface.allInterfaces
-			if (interface.hwnd == hwnd && !interface.allowHooking)
-				return interface.clear()
+		if (idObject!=OBJID_WINDOW)
+			return
+		WinGetClass, cls, % "ahk_id" hwnd
+		if (cls = "tooltips_class32")
+			return
+		if (event == EVENT_OBJECT_DESTROY) {
+			if taskbarInterface.allInterfaces.HasKey(hwnd)
+				taskbarInterface.allInterfaces[hwnd].clear()
+			return 
+		} else if (event == EVENT_OBJECT_SHOW && taskbarInterface.hasTemplates) {	; POC templates 
+			if taskbarInterface.allInterfaces.HasKey(hwnd) ; If the hwnd alredy has an interface, return
+				return
+			; For reference:
+			; template: {include:WinTitle,exclude:excludeWinTitle,templateFunction:templateFunction}
+			for i, template in taskbarInterface.templates {
+				WinExistIncludeParams:="",WinExistExcludeParams:="" ; For peace of mind
+				if template.include  {
+					WinExistIncludeParams:=template.include.clone()
+					WinExistIncludeParams[1]:=WinExistIncludeParams[1] . " ahk_id " hwnd
+				}
+				if template.exclude  {
+					WinExistExcludeParams:=template.exclude.clone()
+					WinExistExcludeParams[1]:=WinExistExcludeParams[1] . " ahk_id " hwnd
+				}
+				if (!template.include && !template.exclude) { 																							; There is no include/exclude criteria, hence match any.
+					template.templateFunction.call(hwnd)
+					return
+				} else if (!template.include && !(template.exclude && hwnd == WinExist(WinExistExcludeParams*))) {												; There is no include criteria and no match for an exclude criteria.
+					template.templateFunction.call(hwnd)
+					return
+				} else if (template.include && hwnd == WinExist(WinExistIncludeParams*)) && !(template.exclude && hwnd == WinExist(WinExistExcludeParams*)){			; There is  an include  criteria and no match for an exclude criteria.
+					template.templateFunction.call(hwnd)
+					return
+				}
+			}
+		}
 		return
 	}
 	
