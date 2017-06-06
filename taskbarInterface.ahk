@@ -64,6 +64,16 @@ class taskbarInterface {
 		this.setThumbButtonhIcon(n,hIcon)					; Set the icon handle
 		return this.ThumbBarUpdateButtons(n)				; Update
 	}
+	queryButtonIconSize(){	; Moved here for convenience
+		; Returns the required pixel width and height for the button icons.
+		; Example:
+		; sz:=taskbarInterface.queryButtonIconSize()
+		; Msgbox, % "The icon width must be: " sz.w  "`nThe icon height must be: " sz.h
+		local SM_CXICON,SM_CYICON
+		SysGet, SM_CXICON, 11
+		SysGet, SM_CYICON, 12
+		return {w:SM_CXICON, h:SM_CYICON}
+	}
 	setButtonToolTip(n,text:=""){
 		; Sets the tooltip for button n, that is shown when the
 		; mouse cursors hover over the button for a few seconds.
@@ -150,6 +160,7 @@ class taskbarInterface {
 		SendMessage, WM_SETICON, ICON_BIG, 		bigIconHandle	,, % "ahk_id" this.hWnd
 		return
 	}
+	
 	; setProgress - The underlying function is called SetProgressValue, but
 	;	I think the word Type is more descriptive of its function.
 	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
@@ -172,19 +183,20 @@ class taskbarInterface {
 	; TBPFLAG tbpFlags
 	; Flags that control the current state of the progress button. Specify  only  one
 	; of the following flags; all states are mutually exclusive of all others.
+	;
 	; TBPF_NOPROGRESS (0x00000000)
 	; 	Stops displaying progress and returns the button to its normal state. Call this
 	; 	method with this flag to dismiss  the  progress  bar  when  the  operation  is
 	; 	complete or canceled.
 
 	; TBPF_INDETERMINATE (0x00000001)
-	; The progress indicator does not grow in size, but cycles repeatedly  along  the
+	;	The progress indicator does not grow in size, but cycles repeatedly  along  the
 	;	length  of the taskbar button. This indicates activity without specifying what
 	;	proportion of the progress is complete. Progress is taking place, but there is
 	;	no prediction as to how long the operation will take.
 
 	; TBPF_NORMAL (0x00000002)
-	; The progress indicator grows in size from left to right in  proportion  to  the
+	;	The progress indicator grows in size from left to right in  proportion  to  the
 	; 	estimated  amount  of  the operation completed. This is a determinate progress
 	;	indicator; a prediction is being made as to the duration of the operation.
 
@@ -502,16 +514,7 @@ class taskbarInterface {
 		; Returns the last error object from exception(...)
 		return this.lastError
 	}
-	queryButtonIconSize(){	
-		; Returns the required pixel width and height for the button icons.
-		; Example:
-		; sz:=taskbarInterface.queryButtonIconSize()
-		; Msgbox, % "The icon width must be: " sz.w  "`nThe icon height must be: " sz.h
-		local SM_CXICON,SM_CYICON
-		SysGet, SM_CXICON, 11
-		SysGet, SM_CYICON, 12
-		return {w:SM_CXICON, h:SM_CYICON}
-	}
+	; Moved queryButtonIconSize to button method section, for convenience
 	; Class methods, affects all interfaces
 	refreshAllButtons(){
 		local k, interface
@@ -689,12 +692,16 @@ class taskbarInterface {
 	; Update
 	updateThumbButtonMask(iId,add:=0,remove:=0){
 		local dwMask
-		dwMask:=(this.getThumbButtonMask(iId)|add)^remove
+		dwMask:=this.getThumbButtonMask(iId)
+		dwMask&remove?dwMask-=remove:""
+		dwMask|=add
 		return this.setThumbButtonMask(iId,dwMask)
 	}
 	updateThumbButtonFlags(iId,add:=0,remove:=0){
 		local dwFlags
-		dwFlags:=(this.getThumbButtonFlags(iId)|add)^remove
+		dwFlags:=this.getThumbButtonFlags(iId)
+		dwFlags&remove?dwFlags-=remove:""
+		dwFlags|=add
 		return this.setThumbButtonFlags(iId,dwFlags)
 	}
 	; Item and struct offsets are specified for maintainabillity
@@ -784,7 +791,7 @@ class taskbarInterface {
 	static init:=0									; For first time use initialising of the com object.
 	
 	; THUMBBUTTON  struct:
-	static thumbButtonSize:=A_PtrSize=4?544:552		; Size calculations according to:
+	static thumbButtonSize:=A_PtrSize=4?540:552		; Size calculations according to:
 	/*
 	; URL:
 	;	- https://msdn.microsoft.com/en-us/library/windows/desktop/dd391559(v=vs.85).aspx (THUMBBUTTON structure)
@@ -797,7 +804,7 @@ class taskbarInterface {
 	HICON            hIcon				8+A_PtrSize				...			A_PtrSize
 	WCHAR            szTip[260]			8+2*A_PtrSize			...			260*2
 	THUMBBUTTONFLAGS dwFlags			8+2*A_PtrSize+260*2		...			4
-	;																		Sum: 32-bit: 4+4+4+0+A_PtrSize+260*2+4=544, 544/A_PtrSize=136, no spacing needed.
+	;																		Sum: 32-bit: 4+4+4+0+A_PtrSize+260*2+4=540, 540/A_PtrSize=135, no spacing needed. EDIT: FIXED miscalculation thumbuttonSize = 540, not 544 ...
 	;																		Sum: 64-bit: 4+4+4+4+A_PtrSize+260*2+4=548, 548/A_PtrSize=68.5 -> add 4 bytes, 552/A_PtrSize=69 (mod(552,A_Ptrsize)=0).
 	;																		64-bit: add 4 bytes spacing to next struct in array
 	;																		Summary: size:= A_PtrSize=4?544:552
@@ -997,6 +1004,8 @@ class taskbarInterface {
 				throw this.lastError
 		}
 		this.GlobalFree(this.WinEventProcFn) ; Free callback function after hook is removed.
+		if !this.hComObj
+			this.CoUnInitialize(true)
 		return this.hHook:=""
 	}
 	WinEventProc(params*) {
@@ -1051,13 +1060,13 @@ class taskbarInterface {
 					WinExistExcludeParams:=template.exclude.clone()
 					WinExistExcludeParams[1]:=WinExistExcludeParams[1] . " ahk_id " hwnd
 				}
-				if (!template.include && !template.exclude) { 																							; There is no include/exclude criteria, hence match any.
+				if (!template.include && !template.exclude) { 																									; There is no include/exclude criteria, hence match any.
 					template.templateFunction.call(hwnd)
 					return
 				} else if (!template.include && !(template.exclude && hwnd == WinExist(WinExistExcludeParams*))) {												; There is no include criteria and no match for an exclude criteria.
 					template.templateFunction.call(hwnd)
 					return
-				} else if (template.include && hwnd == WinExist(WinExistIncludeParams*)) && !(template.exclude && hwnd == WinExist(WinExistExcludeParams*)){			; There is  an include  criteria and no match for an exclude criteria.
+				} else if (template.include && hwnd == WinExist(WinExistIncludeParams*)) && !(template.exclude && hwnd == WinExist(WinExistExcludeParams*)){	; There is  an include  criteria and no match for an exclude criteria.
 					template.templateFunction.call(hwnd)
 					return
 				}
@@ -1168,14 +1177,14 @@ class taskbarInterface {
 		SetTimer, % tf, % -abs(ref.peekrate)
 		return
 	}
-	InvalidateIconicBitmaps(){
-		this.Dwm_InvalidateIconicBitmaps(this.hWnd)
-		return
-	}
+
 	;	NOTE: End context: this=taskbarInterface
 	; 		
 	;
-	
+	InvalidateIconicBitmaps(){
+		taskbarInterface.Dwm_InvalidateIconicBitmaps(this.hWnd)
+		return
+	}
 	; DWM library
 	Dwm_SetWindowAttributeHasIconicBitmap(hwnd,onOff){
 		;	DWMWA_HAS_ICONIC_BITMAP=10
