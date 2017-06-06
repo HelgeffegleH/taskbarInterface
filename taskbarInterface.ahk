@@ -156,11 +156,10 @@ class taskbarInterface {
 			bigIconHandle:=smallIconHandle
 		this.smallIconHandle:=smallIconHandle
 		this.bigIconHandle:=bigIconHandle
-		SendMessage, WM_SETICON, ICON_SMALL,	smallIconHandle	,, % "ahk_id" this.hWnd
-		SendMessage, WM_SETICON, ICON_BIG, 		bigIconHandle	,, % "ahk_id" this.hWnd
+		this.PostMessage(this.hWnd,WM_SETICON,ICON_SMALL,smallIconHandle)
+		this.PostMessage(this.hWnd,WM_SETICON,ICON_BIG,bigIconHandle)
 		return
 	}
-	
 	; setProgress - The underlying function is called SetProgressValue, but
 	;	I think the word Type is more descriptive of its function.
 	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
@@ -647,6 +646,12 @@ class taskbarInterface {
 		if (this.deleteBMPPeekPreview && this.peekHbm)
 			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.peekHbm)
 		return this.peekHbm:=""
+	}
+	PostMessage(hWnd,Msg,wParam,lParam){
+		; Url:
+		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms644944(v=vs.85).aspx
+		; Used by setTaskbarIcon()
+		return DllCall("User32.dll\PostMessage", "Ptr", hWnd, "Uint", Msg, "Uptr", wParam, "Ptr", lParam)
 	}
 	verifyId(iId){
 	; Ensures the button number iId, is in the correct range.
