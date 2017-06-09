@@ -2,6 +2,7 @@
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
 	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released.
+	static destuctor:= OnExit(ObjBindMethod(taskbarInterface,"clearAll",true))	; Make sure com is cleared. Not sure this is needed.
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -521,10 +522,14 @@ class taskbarInterface {
 			interface.refreshButtons()
 		return
 	}
-	clearAll(){
+	clearAll(exiting:=false){
 		local k, interface
+		if !IsObject(taskbarInterface.allInterfaces)
+			return
 		for k, interface in taskbarInterface.allInterfaces
 			interface.clear()
+		if exiting
+			taskbarInterface.clearInterface()
 		return
 	}
 	static allDisabled:=true 		; All message monitor is disabled before any objects has been derived from this class.
