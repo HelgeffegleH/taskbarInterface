@@ -12,6 +12,7 @@ class taskbarInterface {
 			else
 				throw this.lastError
 		}
+		this.dim:=this.queryButtonIconSize()				; this is used by addToImageList.
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
 		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
 		if !taskbarInterface.init							; On first call here, initialise the com object and turn on button messages. (WM_COMMAND)
@@ -56,6 +57,59 @@ class taskbarInterface {
 		static THBF_DISABLED:=0x1
 		this.updateThumbButtonFlags(n,0,THBF_DISABLED)		; Update flag, remove THBF_DISABLED:=0x8
 		return this.ThumbBarUpdateButtons(n)				; Update
+	}
+	setButtonImage(n,nIL){
+		; Set image for button n.
+		; nIL is the index of the image to set in the image list, you can add images to the image list via the addToImageList() method
+		
+		static THB_BITMAP:=0x1
+		this.updateThumbButtonMask(n,THB_BITMAP,0)
+		this.setThumbButtoniBitmap(n,nIL)
+		this.ThumbBarSetImageList()
+		return this.ThumbBarUpdateButtons(n)				; Update
+	}
+	addToImageList(bitmap,bitmapIsHandle:=false){
+		; Add bitmaps to the imagelist for the buttons
+		; bitmap, a handle to a bitmap or a path to an image, or and object on the form: [path,iconNumber], eg, bitmap:=[shell32.dll, 37]. Path is relative to script directory if not full.
+		; specify bitmapIsHandle:=true if bitmap is a handle to a bitmap.
+		; Returns the added images index in the imagelist. The first image has index 1, second 2 and so on...
+		; When specifying a handle, call queryButtonIconSize() to obtain the required size of the bitmap. See queryButtonIconSize() below.
+		local file, iconNumber,hBmp, index
+		if !this.hImageList
+			this.hImageList:=IL_Create(7,1)
+		if bitmapIsHandle {
+			index:=IL_Add(this.hImageList,"hBitmap:" . bitmap)
+		} else {
+			if IsObject(bitmap)
+				file:=bitmap[1], iconNumber:="Icon" . bitmap[2]
+			else
+				file:=bitmap, iconNumber:=""
+			hBmp:=LoadPicture(file, iconNumber . " Gdi+ w" this.dim.w  " h" this.dim.h)
+			if !hBmp {
+				this.lastError:=Exception("Invalid file name")
+				if this.mute
+					return this.lastError
+				else
+					throw this.lastError
+			}
+			index:=IL_Add(this.hImageList, "hBitmap:" . hBmp)
+		}
+		return index
+	}
+	destroyImageList(){
+		; Destroys the image list for the button images.
+		; return 1 on success, throws exception or returns exception on failure (depends on mute), returns blank if no imagelist exists.
+		if (this.hImageList && IL_Destroy(this.hImageList)) {
+			this.hImageList:=""
+			return 1
+		} else if this.hImageList {
+			this.lastError:=Exception("ImageList destroy failed.") 
+			if this.mute
+				return this.lastError
+			else
+				throw this.lastError
+		}
+		return
 	}
 	setButtonIcon(n,hIcon){
 		; Set button icon for button n
@@ -449,6 +503,8 @@ class taskbarInterface {
 		;
 		; Misnomer. refreshInterface might be more accurate. Leave for now...
 		if this.THUMBBUTTON {
+			if this.hImageList
+				this.ThumbBarSetImageList()
 			this.ThumbBarAddButtons()
 			this.ThumbBarUpdateButtons(1,7)
 		}
@@ -475,22 +531,6 @@ class taskbarInterface {
 		this.addTab()
 		this.disableCustomPeekPreview()
 		this.disableCustomThumbnailPreview()
-	}
-	clear(){
-		; Call this function before clearing your last reference to any object derived from this class.
-		; Turn off timer if on.
-		this.stopTimer()
-		; Disable (and free) custom preview bitmaps
-		this.disableCustomThumbnailPreview()
-		this.disableCustomPeekPreview()
-		; Free memory
-		this.freeMemory()
-		; Free thumbnail/peek preview bitmaps, if needed
-		this.freeThumbnailPreviewBMP()
-		this.freePeekPreviewBMP()
-		; Remove from allInterfaces array
-		taskbarInterface.allInterfaces.Delete(this.hwnd)
-		return
 	}
 	stopThisButtonMonitor(){
 		; This will dismiss the callback, the message monitor is still on. To turn off message monitor use stopAllButtonMonitor()
@@ -576,7 +616,7 @@ class taskbarInterface {
 	;
 	__Call(fn,p*){
 		; For verifying correct input. maybe change this.
-		if InStr( 	  ",showButton,hideButton,setButtonIcon,enableButton,disableButton"
+		if InStr( 	  ",showButton,hideButton,setButtonImage,setButtonIcon,enableButton,disableButton"
 					. ",setButtonToolTip,dismissPreviewOnButtonClick,removeButtonBackground"
 					. ",reAddButtonBackground,setButtonNonInteractive,setButtonInteractive,", "," . fn . ",") {
 			if this.isFreed {
@@ -635,6 +675,25 @@ class taskbarInterface {
 		return
 	}
 	; End internal methods for flashTaskbarIcon()
+	clear(){
+		; Edit: There is no need to manually call this. The taskbarInterface class will clear every thing for you.
+		; Hence, this is developer notes:
+		; Call this function before clearing your last reference to any object derived from this class.
+		; Turn off timer if on.
+		this.stopTimer()
+		; Disable (and free) custom preview bitmaps
+		this.disableCustomThumbnailPreview()
+		this.disableCustomPeekPreview()
+		this.destroyImageList()
+		; Free memory
+		this.freeMemory()
+		; Free thumbnail/peek preview bitmaps, if needed
+		this.freeThumbnailPreviewBMP()
+		this.freePeekPreviewBMP()
+		; Remove from allInterfaces array
+		taskbarInterface.allInterfaces.Delete(this.hwnd)
+		return
+	}
 	freeMemory(){
 		if this.THUMBBUTTON
 			this.GlobalFree(this.THUMBBUTTON)
@@ -700,6 +759,13 @@ class taskbarInterface {
 	; The caller of update() then calls ThumbBarUpdateButtons() when finished
 
 	; Update
+	/* 
+	Masks:
+	THB_BITMAP   = 0x00000001,
+	THB_ICON     = 0x00000002,
+	THB_TOOLTIP  = 0x00000004,
+	THB_FLAGS    = 0x00000008
+	*/
 	updateThumbButtonMask(iId,add:=0,remove:=0){
 		local dwMask
 		dwMask:=this.getThumbButtonMask(iId)
@@ -707,6 +773,15 @@ class taskbarInterface {
 		dwMask|=add
 		return this.setThumbButtonMask(iId,dwMask)
 	}
+	/*
+	Flags:
+	THBF_ENABLED         = 0x00000000,
+	THBF_DISABLED        = 0x00000001,
+	THBF_DISMISSONCLICK  = 0x00000002,
+	THBF_NOBACKGROUND    = 0x00000004,
+	THBF_HIDDEN          = 0x00000008,
+	THBF_NONINTERACTIVE  = 0x00000010
+	*/
 	updateThumbButtonFlags(iId,add:=0,remove:=0){
 		local dwFlags
 		dwFlags:=this.getThumbButtonFlags(iId)
@@ -733,11 +808,18 @@ class taskbarInterface {
 		local	structOffset	:=	this.thumbButtonSize*(iId-1)
 		return NumPut(dwMask, this.THUMBBUTTON+itemOffset+structOffset, "Uint")
 	}
+	setThumbButtoniBitmap(iId,iBitmap){
+		; The imagelist index is zero base, hence iBitmap-1. User should supply 1-based index
+		static	itemOffset		:=	8																		; iBitmap
+		local	structOffset	:=	this.thumbButtonSize*(iId-1)
+		return NumPut(iBitmap-1, this.THUMBBUTTON+itemOffset+structOffset, "Ptr")
+	}
 	setThumbButtonhIcon(iId,hIcon){
 		static	itemOffset		:=	8+A_PtrSize																; hIcon
 		local	structOffset	:=	this.thumbButtonSize*(iId-1)
 		return NumPut(hIcon, this.THUMBBUTTON+itemOffset+structOffset, "Ptr")
 	}
+	
 	setThumbButtonToolTipText(iId,text:=""){
 		static	itemOffset		:=	8+2*A_PtrSize															; szTip
 		local	structOffset	:=	this.thumbButtonSize*(iId-1)
@@ -751,47 +833,50 @@ class taskbarInterface {
 	
 	;
 	; Com Interface wrapper functions
-	; The bound funcs are made in init()
+	; The bound funcs are made in initInterface()
 	addTab(){
-		return taskbarInterface.boundFuncs.addTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
+		return taskbarInterface.vTable.addTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
 	}
 	deleteTab(){
-		return taskbarInterface.boundFuncs.deleteTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
+		return taskbarInterface.vTable.deleteTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
 	}
 	activateTab(){
-		return taskbarInterface.boundFuncs.activateTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
+		return taskbarInterface.vTable.activateTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
 	}
 	setActiveAlt(){
-		return taskbarInterface.boundFuncs.setActiveAltFn.Call("Ptr", this.hWnd) ; return 0 is ok!
+		return taskbarInterface.vTable.setActiveAltFn.Call("Ptr", this.hWnd) ; return 0 is ok!
 	}
 	clearActiveAlt(){
-		return taskbarInterface.boundFuncs.setActiveAltFn.Call("Ptr", 0) ; return 0 is ok!
+		return taskbarInterface.vTable.setActiveAltFn.Call("Ptr", 0) ; return 0 is ok!
 	}
 	registerTab(){
-		return taskbarInterface.boundFuncs.RegisterTabFn.Call("Ptr", this.hWnd, "Ptr", this.hWnd) ; return 0 is ok!
+		return taskbarInterface.vTable.RegisterTabFn.Call("Ptr", this.hWnd, "Ptr", this.hWnd) ; return 0 is ok!
 	}
 	ThumbBarAddButtons(){
 		; This function can only be called once it seems. Make one call and add all buttons hidden. Then use ThumbBarUpdateButtons() to "add" and "remove" buttons via the THBF_HIDDEN flag
 		; Max buttons is 7
-		return taskbarInterface.boundFuncs.ThumbBarAddButtonsFn.Call("Ptr", this.hWnd, "Uint", 7, "Ptr", this.THUMBBUTTON) ; return 0 is ok!
+		return taskbarInterface.vTable.ThumbBarAddButtonsFn.Call("Ptr", this.hWnd, "Uint", 7, "Ptr", this.THUMBBUTTON) ; return 0 is ok!
 	}
 	ThumbBarUpdateButtons(iId,n:=1){
-		return taskbarInterface.boundFuncs.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1*n, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
+		return taskbarInterface.vTable.ThumbBarUpdateButtonsFn.Call("Ptr", this.hWnd, "Uint", 1*n, "Ptr", this.THUMBBUTTON+this.thumbButtonSize*(iId-1)) ; return 0 is ok!
+	}
+	ThumbBarSetImageList(){
+		return taskbarInterface.vTable.ThumbBarSetImageListFn.Call("Ptr", this.hWnd, "Ptr", this.hImageList)
 	}
 	_setThumbnailToolTip(){
-		return taskbarInterface.boundFuncs.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
+		return taskbarInterface.vTable.ThumbnailToolTipFn.Call("Ptr", this.hWnd, "Str", this.tooltipText)
 	}
 	setProgressState(){
-		return taskbarInterface.boundFuncs.SetProgressStateFn.Call("Ptr", this.hWnd, "Uint", this.progressType)
+		return taskbarInterface.vTable.SetProgressStateFn.Call("Ptr", this.hWnd, "Uint", this.progressType)
 	}
 	setProgressValue(){
-		return taskbarInterface.boundFuncs.SetProgressValueFn.Call("Ptr", this.hWnd, "Int64", this.progressValue, "Int64", 100) ; 100 is max progress (done)
+		return taskbarInterface.vTable.SetProgressValueFn.Call("Ptr", this.hWnd, "Int64", this.progressValue, "Int64", 100) ; 100 is max progress (done)
 	}
 	_setOverlayIcon(){
-		return taskbarInterface.boundFuncs.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription) 
+		return taskbarInterface.vTable.setOverlayIconFn.Call("Ptr", this.hWnd, "Ptr", this.overlayIconHandle, "Str", this.overlayIconDescription) 
 	}
 	_setThumbnailClip(rect){
-		return taskbarInterface.boundFuncs.ThumbnailClipFn.Call("Ptr", this.hWnd, "Ptr", rect)
+		return taskbarInterface.vTable.ThumbnailClipFn.Call("Ptr", this.hWnd, "Ptr", rect)
 	}
 	             
 	;
@@ -844,30 +929,32 @@ class taskbarInterface {
 				throw this.lastError
 		}
 		; Get the address to the vTable.
-		this.vTable:=NumGet(this.hComObj+0,0,"Ptr")
+		this.vTablePtr:=NumGet(this.hComObj+0,0,"Ptr")
 		; Create function objects for the interface, for convenience and clarity
 			
 																																								; Name:					 Number:
 		; For convenience when freeing the interface, add all bound funcs to one array																																					
-		 this.boundFuncs:={0:0
-		,HrInitFn					: Func("DllCall").Bind(NumGet(this.vTable+ 3*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; HrInit					( 3)
-		,addTabFn					: Func("DllCall").Bind(NumGet(this.vTable+ 4*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; AddTab					( 4)
-		,deleteTabFn				: Func("DllCall").Bind(NumGet(this.vTable+ 5*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; DeleteTab					( 5)
-		,activateTabFn				: Func("DllCall").Bind(NumGet(this.vTable+ 6*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ActivateTab				( 6)
-		,setActiveAltFn				: Func("DllCall").Bind(NumGet(this.vTable+ 7*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetActiveAlt				( 7)
-		,SetProgressValueFn			: Func("DllCall").Bind(NumGet(this.vTable+ 9*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetProgressValue			( 9)
-		,SetProgressStateFn			: Func("DllCall").Bind(NumGet(this.vTable+10*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetProgressState			(10)
-		,RegisterTabFn				: Func("DllCall").Bind(NumGet(this.vTable+11*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; RegisterTab				(11)
-		,UnregisterTabFn			: Func("DllCall").Bind(NumGet(this.vTable+12*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; UnregisterTab				(12)
-		,SetTabOrderFn				: Func("DllCall").Bind(NumGet(this.vTable+13*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetTabOrder				(13)
-		,SetTabActiveFn				: Func("DllCall").Bind(NumGet(this.vTable+14*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetTabActive				(14)
-		,ThumbBarAddButtonsFn		: Func("DllCall").Bind(NumGet(this.vTable+15*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ThumbBarAddButtons		(15)
-		,ThumbBarUpdateButtonsFn	: Func("DllCall").Bind(NumGet(this.vTable+16*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; ThumbBarUpdateButtons		(16)
-		,SetOverlayIconFn			: Func("DllCall").Bind(NumGet(this.vTable+18*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetOverlayIcon			(18)
-		,ThumbnailToolTipFn			: Func("DllCall").Bind(NumGet(this.vTable+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetThumbnailTooltip		(19)
-		,ThumbnailClipFn			: Func("DllCall").Bind(NumGet(this.vTable+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)										; SetThumbnailClip			(20)
-		,1:0}
-		hr:=this.boundFuncs.HrInitFn.Call()	; Init the interface.
+		 ;this.vTable:={}
+		this.vTable:=[]                                                                                                                                
+		this.vTable["HrInitFn"]					:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 3*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; HrInit					( 3)
+		this.vTable["addTabFn"]					:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 4*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; AddTab					( 4)
+		this.vTable["deleteTabFn"]				:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 5*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; DeleteTab					( 5)
+		this.vTable["activateTabFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 6*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; ActivateTab				( 6)
+		this.vTable["setActiveAltFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 7*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetActiveAlt				( 7)
+		this.vTable["SetProgressValueFn"]		:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 9*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetProgressValue			( 9)
+		this.vTable["SetProgressStateFn"]		:= Func("DllCall").Bind(NumGet(this.vTablePtr+10*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetProgressState			(10)
+		this.vTable["RegisterTabFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+11*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; RegisterTab				(11)
+		this.vTable["UnregisterTabFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+12*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; UnregisterTab				(12)
+		this.vTable["SetTabOrderFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+13*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetTabOrder				(13)
+		this.vTable["SetTabActiveFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+14*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetTabActive				(14)
+		this.vTable["ThumbBarAddButtonsFn"]		:= Func("DllCall").Bind(NumGet(this.vTablePtr+15*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; ThumbBarAddButtons		(15)
+		this.vTable["ThumbBarUpdateButtonsFn"]	:= Func("DllCall").Bind(NumGet(this.vTablePtr+16*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; ThumbBarUpdateButtons		(16)
+		this.vTable["ThumbBarSetImageListFn"]	:= Func("DllCall").Bind(NumGet(this.vTablePtr+17*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; ThumbBarSetImageList		(17)
+		this.vTable["SetOverlayIconFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+18*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetOverlayIcon			(18)
+		this.vTable["ThumbnailToolTipFn"]		:= Func("DllCall").Bind(NumGet(this.vTablePtr+19*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetThumbnailTooltip		(19)
+		this.vTable["ThumbnailClipFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetThumbnailClip			(20)
+		
+		hr:=this.vTable.HrInitFn.Call()	; Init the interface.
 		if hr {
 			this.lastError:=Exception("Com failed to initialise.",-2)
 			if this.mute
@@ -906,10 +993,10 @@ class taskbarInterface {
 		OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn,0)
 		this.taskbarButtonCreatedMsgFn:=""
 		; Clear all boundFuncs
-		this.boundFuncs:=""
+		this.vTable:=""
 		
 		this.hComObj:=""
-		this.vTable:=""
+		this.vTablePtr:=""
 		if this.hHook	; unHook
 			this.UnhookWinEvent()
 		if this.CoInitialised
