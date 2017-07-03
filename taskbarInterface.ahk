@@ -2,7 +2,7 @@
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
 	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released.
-	static destuctor:= OnExit(ObjBindMethod(taskbarInterface,"clearAll",true))	; Make sure com is cleared. Not sure this is needed.
+	static destructor:= OnExit(ObjBindMethod(taskbarInterface,"clearAll",true))	; Make sure com is cleared. Not sure this is needed.
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -324,6 +324,8 @@ class taskbarInterface {
 	;  		the taskbar button, that existing overlay is replaced.
 	;
 	;	Omit the handle paramter to remove the icon. 
+	;
+	;	To use a bitmap as the overlay icon, you can use LoadPictureType to load a bitmap as an icon, see https://github.com/HelgeffegleH/LoadPictureType
 	setOverlayIcon(hIcon:=0,text:=""){
 		this.overlayIconHandle:=hIcon, this.overlayIconDescription:=text
 		return this._SetOverlayIcon()
@@ -1064,10 +1066,11 @@ class taskbarInterface {
 	EVENT_OBJECT_UNCLOAKED:=0x8018 
 	EVENT_OBJECT_SHOW:=0x8002
 	EVENT_OBJECT_HIDE:=0x8003
+	EVENT_OBJECT_CREATE:=0x8000
 	;static min:=0x00000001, max:=0x7FFFFFFF
 	*/
 	SetWinEventHook(){
-		static EVENT_OBJECT_CREATE:=0x8000
+		
 		static EVENT_OBJECT_DESTROY:=0x8001
 		static EVENT_OBJECT_SHOW:=0x8002
 		static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
@@ -1120,11 +1123,10 @@ class taskbarInterface {
 		   DWORD         dwmsEventTime
 		);
 		*/
-		static EVENT_OBJECT_CREATE:=0x8000
 		static EVENT_OBJECT_DESTROY:=0x8001	
 		static EVENT_OBJECT_SHOW:=0x8002	
 		static OBJID_WINDOW:=0
-		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,interface,template,cls ; Awkward.
+		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,template,cls ; Awkward.
 		local WinExistIncludeParams,WinExistExcludeParams
 		hWinEventHook	:=	NumGet(params+0,  -A_PtrSize, "Ptr" )
 		,event			:=	NumGet(params+0,		   0, "Uint")
@@ -1136,13 +1138,13 @@ class taskbarInterface {
 		if (idObject!=OBJID_WINDOW)
 			return
 		WinGetClass, cls, % "ahk_id" hwnd
-		if (cls = "tooltips_class32")
+		if (cls = "tooltips_class32")		; Do not consider tooltips created by the script.
 			return
 		if (event == EVENT_OBJECT_DESTROY) {
 			if taskbarInterface.allInterfaces.HasKey(hwnd)
 				taskbarInterface.allInterfaces[hwnd].clear()
 			return 
-		} else if (event == EVENT_OBJECT_SHOW && taskbarInterface.hasTemplates) {	; POC templates 
+		} else if (event == EVENT_OBJECT_SHOW && taskbarInterface.hasTemplates) {	; Templates 
 			if taskbarInterface.allInterfaces.HasKey(hwnd) ; If the hwnd alredy has an interface, return
 				return
 			; For reference:
