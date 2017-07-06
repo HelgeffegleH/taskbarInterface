@@ -6,3 +6,4 @@ Requires threadFunc class, found at https://github.com/HelgeffegleH/threadFunc n
 
 This is (mostly) finished, but undocumented. There is an example usage at: https://github.com/HelgeffegleH/UCR (UCR fork)
 
+There is some content in the [wiki](https://github.com/HelgeffegleH/taskbarInterface/wiki "go to the taskbarInterface wiki page")
