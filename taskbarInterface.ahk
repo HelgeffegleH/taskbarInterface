@@ -705,13 +705,13 @@ class taskbarInterface {
 	; Help functions for freeing preview bitmaps, called by clear and disable peek/thumb preview functions
 	freeThumbnailPreviewBMP(){
 		if (this.deleteBMPThumbnailPreview && this.thumbHbm)
-			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.thumbHbm)
-		return this.thumbHbm:=""
+			this.freeBitmap(this.thumbHbm), this.thumbHbm:=""
+		return 
 	}
 	freePeekPreviewBMP(){
 		if (this.deleteBMPPeekPreview && this.peekHbm)
-			DllCall("Gdi32.dll\DeleteObject", "Ptr", this.peekHbm)
-		return this.peekHbm:=""
+			this.freeBitmap(this.peekHbm), this.peekHbm:=""
+		return
 	}
 	PostMessage(hWnd,Msg,wParam,lParam){
 		; Url:
@@ -1229,8 +1229,7 @@ class taskbarInterface {
 		w:= lParam >> 16, h:= lParam & 0xFFFF																	; Get the max width and height of the bitmap
 		if (ref.saveThumbBitmap && ref.thumbHbm) || (ref.thumbHbm && A_TickCount-ref.pThumbTic<ref.thumbrate)
 			return this.Dwm_SetIconicThumbnail(hWnd,ref.thumbHbm,false,ref.dwSITFlagsThumbnailPreview)			; Set the old bitmap																					
-		if (ref.thumbHbm && this.deleteBMPThumbnailPreview)
-			this.freeBitmap(ref.thumbHbm), ref.thumbHbm:=""
+		ref.freeThumbnailPreviewBMP()																			; Conditional: if (ref.thumbHbm && ref.deleteBMPThumbnailPreview)
 		ref.thumbHbm:=ref.bitmapFunc.call(w,h,ref)																; Call the bitmapFunc to get the new bitmap
 		if !ref.thumbHbm
 			return
@@ -1263,8 +1262,7 @@ class taskbarInterface {
 		this.GetClientRect(hwnd,w,h)																							; Get the max width and height of the bitmap
 		if (ref.savePeekBitmap && ref.peekHbm) || (ref.peekHbm && A_TickCount-ref.ppeekTic<ref.peekrate)
 			return this.Dwm_SetIconicLivePreviewBitmap(hWnd,ref.peekHbm,ref.peekX,ref.peekY, false,ref.dwSITFlagsPeekPreview)	; Set the new bitmap
-		if (ref.peekHbm && ref.deleteBMPPeekPreview)
-			this.freeBitmap(ref.peekHbm), ref.peekHbm:=""
+		ref.freePeekPreviewBMP()																								; Conditional: if (ref.peekHbm && ref.deleteBMPPeekPreview)
 		ref.peekhbm:=ref.peekbitmapFunc.call(w,h,ref)																			; Call the bitmapFunc to get the new bitmap
 		if !ref.peekhbm
 			return
