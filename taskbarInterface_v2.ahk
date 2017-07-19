@@ -1087,7 +1087,7 @@ class taskbarInterface {
 			return
 		this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
 		this.CoInitialize()
-		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", this.hookWindowClose ? EVENT_OBJECT_DESTROY : EVENT_OBJECT_SHOW, "Uint", this.hasTemplates ? EVENT_OBJECT_SHOW : EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", this.ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
+		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", this.hookWindowClose ? EVENT_OBJECT_DESTROY : EVENT_OBJECT_SHOW, "Uint", this.hasTemplates ? EVENT_OBJECT_SHOW : EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
 		if !this.hHook {
 			this.lastError:=Exception("SetWinEventHook failed",-1)
 			if this.mute
@@ -1096,11 +1096,6 @@ class taskbarInterface {
 				throw this.lastError
 		}
 		return
-	}
-	ProcessExist() { ; Used by SetWinEventHook(). Note: In v2 ProcessExist() is built-in, remove this then.
-		; Url:
-		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms683180(v=vs.85).aspx (GetCurrentProcessId function)
-		return DllCall("Kernel32.dll\GetCurrentProcessId")
 	}
 	UnhookWinEvent(){
 		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook){
