@@ -1,9 +1,10 @@
 # taskbarInterface
 
-Implements some of the taskbar extensions discussed at, https://msdn.microsoft.com/en-us/library/windows/desktop/dd378460(v=vs.85).aspx
+See the introduction and documation in the [wiki](https://github.com/HelgeffegleH/taskbarInterface/wiki "go to the taskbarInterface wiki page").
 
-Requires threadFunc class, found at https://github.com/HelgeffegleH/threadFunc note that taskbarInterface.ahk includes this file, manage directories.
+Implements some of the taskbar extensions discussed at, [msdn](https://msdn.microsoft.com/en-us/library/windows/desktop/dd378460(v=vs.85).aspx).
 
-This is (mostly) finished, but undocumented. There is an example usage at: https://github.com/HelgeffegleH/UCR (UCR fork)
+Requires the [threadFunc](https://github.com/HelgeffegleH/threadFunc) class, note that `taskbarInterface.ahk` includes this file, manage directories.
 
-There is some content in the [wiki](https://github.com/HelgeffegleH/taskbarInterface/wiki "go to the taskbarInterface wiki page")
+There is an example usage [here](https://github.com/HelgeffegleH/UCR "UCR fork").
+
