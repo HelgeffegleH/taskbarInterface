@@ -1,8 +1,7 @@
 ﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
-	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released.
-	static destructor:= OnExit(ObjBindMethod(taskbarInterface,"clearAll",true))	; Make sure com is cleared. Not sure this is needed.
+	static manualClearInterface:=true						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -224,6 +223,8 @@ class taskbarInterface {
 	setProgress(value:=0){
 		; value in range (0,100)
 		this.progressValue:=value
+		if !this.flashTimer
+			this.preFlashSettings[1]:=value
 		return this.SetProgressValue(value)
 	}
 
@@ -272,8 +273,11 @@ class taskbarInterface {
 		static dictionary:={Off:0,INDETERMINATE:1,Normal:2, Green:2, Error:4, Red:4,Paused:8,Pause:8,Yellow:8}
 		local p
 		this.progressType:= (p:=dictionary[type]) ? p : 0
+		if !this.flashTimer
+			this.preFlashSettings[2]:=type
 		return this.setProgressState()
 	}
+	preFlashSettings:=[] ; For restoring taskbar progress / color after flash
 	flashTaskbarIcon(color:="off", nFlashes:=5, flashTime:=250, offTime:=250){
 		; Flash the background of the taskbar icon by setting it to progress 100 for  flashTime  ms  every
 		;  offTime  ms, nFlashes times. Valid colors are green,red,yellow. (translates to
@@ -655,8 +659,12 @@ class taskbarInterface {
 	flashOff(type,flashTime,offTime){
 		local fn
 		this.SetProgressType("Off")									; Turn off the progress/color
-		if !(--this.flashesRemaining)								; Decrement flash count, return if appropriate
+		if !(--this.flashesRemaining){								; Decrement flash count, return if appropriate
+			this.setProgressType(this.preFlashSettings[2])			; For reference: this.preFlashSettings:=[this.progressValue,this.unmappedProgressType] 
+			this.setProgress(this.preFlashSettings[1])		
+			this.preFlashSettings:=""                               
 			return this.flashTimer:=""
+		}
 		fn:=ObjBindMethod(this,"flashOn",type,flashTime,offTime)	; Make a timer for turning on the color
 		this.flashTimer:=fn											;
 		SetTimer, % fn, % -offTime									;

@@ -1,8 +1,7 @@
 ﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
-	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released.
-	static destructor:= OnExit(ObjBindMethod(taskbarInterface,"clearAll",true))	; Make sure com is cleared. Not sure this is needed.
+	static manualClearInterface:=true						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -31,6 +30,7 @@ class taskbarInterface {
 	;	thee toolbar itself cannot be removed without re-creating the window itself.
 	;
 	;	- in the following n is the button number, n ∈ [1,7]⊂ℤ
+	;<< buttons >>
 	showButton(n){
 		; Show button n
 		static THBF_HIDDEN:=0x8
@@ -215,6 +215,7 @@ class taskbarInterface {
 		this.PostMessage(this.hWnd,WM_SETICON,ICON_BIG,bigIconHandle)
 		return
 	}
+	;<< progress >>
 	; setProgress - The underlying function is called SetProgressValue, but
 	;	I think the word Type is more descriptive of its function.
 	; Displays or updates a progress bar hosted in  a  taskbar  button  to  show  the
@@ -224,6 +225,8 @@ class taskbarInterface {
 	setProgress(value:=0){
 		; value in range (0,100)
 		this.progressValue:=value
+		if !this.flashTimer
+			this.preFlashSettings[1]:=value
 		return this.SetProgressValue(value)
 	}
 
@@ -272,8 +275,11 @@ class taskbarInterface {
 		static dictionary:={Off:0,INDETERMINATE:1,Normal:2, Green:2, Error:4, Red:4,Paused:8,Pause:8,Yellow:8}
 		local p
 		this.progressType:= (p:=dictionary[type]) ? p : 0
+		if !this.flashTimer
+			this.preFlashSettings[2]:=type
 		return this.setProgressState()
 	}
+	preFlashSettings:=[] ; For restoring taskbar progress / color after flash
 	flashTaskbarIcon(color:="off", nFlashes:=5, flashTime:=250, offTime:=250){
 		; Flash the background of the taskbar icon by setting it to progress 100 for  flashTime  ms  every
 		;  offTime  ms, nFlashes times. Valid colors are green,red,yellow. (translates to
@@ -352,6 +358,7 @@ class taskbarInterface {
 	; bottom	(y2)
 	;	- The y-coordinate of the lower-right corner of the rectangle.
 	; Call without any parameters to reset to default
+	;<< thumbnail and peek preview >>
 	setThumbnailClip(left:="",top:="",right:="",bottom:=""){
 		local rect
 		if (left="" || top="" || right="" || bottom=""){
@@ -593,6 +600,7 @@ class taskbarInterface {
 	}
 	static templates:=[] ; Holds all templates
 	static hasTemplates:=0
+	;<< makeTemplate >>
 	makeTemplate(templateFunction,WinTitle:="",excludeWinTitle:="") {
 		templateFunction := new threadFunc(templateFunction,,,,true)
 		if !templateFunction
@@ -662,8 +670,12 @@ class taskbarInterface {
 	flashOff(type,flashTime,offTime){
 		local fn
 		this.SetProgressType("Off")									; Turn off the progress/color
-		if !(--this.flashesRemaining)								; Decrement flash count, return if appropriate
+		if !(--this.flashesRemaining){								; Decrement flash count, return if appropriate
+			this.setProgressType(this.preFlashSettings[2])			; For reference: this.preFlashSettings:=[this.progressValue,this.unmappedProgressType] 
+			this.setProgress(this.preFlashSettings[1])		
+			this.preFlashSettings:=""                               
 			return this.flashTimer:=""
+		}
 		fn:=ObjBindMethod(this,"flashOn",type,flashTime,offTime)	; Make a timer for turning on the color
 		this.flashTimer:=fn											;
 		SetTimer(fn,-offTime)										;
@@ -843,6 +855,7 @@ class taskbarInterface {
 	;
 	; Com Interface wrapper functions
 	; The bound funcs are made in initInterface()
+	;<< com wrapper >>
 	addTab(){
 		return taskbarInterface.vTable.addTabFn.Call("Ptr", this.hWnd) ; return 0 is ok!
 	}
@@ -922,6 +935,7 @@ class taskbarInterface {
 	; 			<	>	<	>	<	>	<	>	<	>	<	>													<	>	<	>	<	>	<	>	<	>	<	>
 	;
 	;
+	;<< initInterface >>
 	initInterface(){
 		; Url:
 		;	-  https://msdn.microsoft.com/en-us/library/windows/desktop/bb774652(v=vs.85).aspx (ITaskbarList interface)
@@ -1076,8 +1090,8 @@ class taskbarInterface {
 	EVENT_OBJECT_CREATE:=0x8000
 	;static min:=0x00000001, max:=0x7FFFFFFF
 	*/
+	;<< SetWinEventHook >>
 	SetWinEventHook(){
-		
 		static EVENT_OBJECT_DESTROY:=0x8001
 		static EVENT_OBJECT_SHOW:=0x8002
 		static idThread := DllCall("User32.dll\GetWindowThreadProcessId", "Ptr", A_ScriptHwnd, "Ptr", 0) ; Url: - https://msdn.microsoft.com/en-us/library/windows/desktop/ms633522(v=vs.85).aspx
@@ -1182,6 +1196,7 @@ class taskbarInterface {
 	;		When a button in a thumbnail toolbar is clicked, the window associated with that thumbnail is sent a WM_COMMAND
 	;		message with the HIWORD of its wParam parameter set to THBN_CLICKED and the LOWORD to the button ID.
 	;
+	;<< button messages >>
 	turnOffButtonMessages(){
 		static WM_COMMAND := 0x111
 		if this.buttonMessageFn
@@ -1284,7 +1299,7 @@ class taskbarInterface {
 		taskbarInterface.Dwm_InvalidateIconicBitmaps(this.hWnd)
 		return
 	}
-	; DWM library
+	;<< DWM library >>
 	Dwm_SetWindowAttributeHasIconicBitmap(hwnd,onOff){
 		;	DWMWA_HAS_ICONIC_BITMAP=10
 		;	Use with DwmSetWindowAttribute. The window will provide a bitmap for use by DWM as an iconic thumbnail or peek representation
@@ -1435,6 +1450,7 @@ class taskbarInterface {
 		return DllCall("Dwmapi.dll\DwmInvalidateIconicBitmaps", "Ptr", hwnd) ; 0 is ok
 	}
 	; Memory allocation/free methods.
+	;<< memory methods and misc >>
 	GlobalAlloc(dwBytes){
 		; URL:
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/aa366574(v=vs.85).aspx (GlobalAlloc function)
