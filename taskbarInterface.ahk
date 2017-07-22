@@ -309,7 +309,7 @@ class taskbarInterface {
 	; Text, string specifying the new text to show as tooltip when 
 	; mouse cursor hovers the thumbnail preview in the taskbar
 	; Specify an empty strin, text:="" to remove the tooltip.
-	setThumbnailToolTip(text){
+	setThumbnailToolTip(text:=""){
 		this.tooltipText:=text
 		return this._setThumbnailToolTip()
 	}
