@@ -8,3 +8,6 @@ Requires the [threadFunc](https://github.com/HelgeffegleH/threadFunc) class, not
 
 There is an example usage [here](https://github.com/HelgeffegleH/UCR "UCR fork").
 
+A _real use_ example is showcased in `wolf_II`'s very nice app, [Anagrams](https://autohotkey.com/boards/viewtopic.php?f=19&t=34240 "Anagrams") (v2.13+, requires the Additional files.zip file.)
+
+Note: file names appended with `_v2` are for [AHK v2](https://autohotkey.com/v2/ "AHK v2").

@@ -505,7 +505,7 @@ class taskbarInterface {
 	unexcludeFromPeek(){ ; See dwm lib for details (Dwm_SetWindowAttributeExcludeFromPeek)
 		return this.Dwm_SetWindowAttributeExcludeFromPeek(this.hwnd,false)
 	}
-	; Misc
+	;<< Misc >>
 	refreshButtons(){
 		;
 		; https://msdn.microsoft.com/en-us/library/windows/hardware/ff561808(v=vs.85).aspx

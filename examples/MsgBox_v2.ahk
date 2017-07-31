@@ -1,6 +1,6 @@
 ﻿; Note that different systems may have different icons available.
 ; A real application should use its own icons. To load a bitmap as an icon handle, you may use LoadPictureType, see: https://github.com/HelgeffegleH/LoadPictureType
-#include taskbarInterface_v2.ahk
+#include ..\taskbarInterface_v2.ahk
 ; Template example. Automatically add taskbar ornaments on window creation, in this example, there is one interface for Error-Msgboxes, and one for Success-msgboxes.
 taskbarInterface.makeTemplate("errorMsgboxTemplate","Error ahk_class #32770")		
 taskbarInterface.makeTemplate("successMsgboxTemplate","Success ahk_class #32770")
