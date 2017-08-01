@@ -1,7 +1,7 @@
 ﻿#include ../../classes/threadFunc/threadFunc.ahk
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
-	static manualClearInterface:=true						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
+	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
 	__new(hwnd,onButtonClickFunction:="",mute:=false){
 		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
 		if taskbarInterface.allInterfaces.HasKey(hwnd){
@@ -192,7 +192,7 @@ class taskbarInterface {
 		}
 		if !this.THUMBBUTTON
 			this.createButtons()							; Create the buttons for this interface.
-		taskbarInterface.restartAllButtonMonitor()			; If monitoring is off, turn on.
+		taskbarInterface.turnOnButtonMessages()				; If monitoring is off, turn on.
 		this.isDisabled:=false								; By default, the interface is not disabled, us stopThisButtonMonitor() to disable.
 		return 
 	}
@@ -638,8 +638,13 @@ class taskbarInterface {
 		}
 	}
 	__Delete(){
-		if !taskbarInterface.manualClearInterface && taskbarInterface.arrayIsEmpty(taskbarInterface.allInterfaces)		; If the last interface is released, release com.
+		local bool
+		if !IsObject(taskbarInterface) ; We are probably exiting the script.
+			return
+		if (bool:=(!taskbarInterface.manualClearInterface && taskbarInterface.arrayIsEmpty(taskbarInterface.allInterfaces))) && !taskbarInterface.hasTemplates		; If the last interface is released and no templates, release com.
 			taskbarInterface.clearInterface()
+		else if bool 
+			taskbarInterface.turnOffButtonMessages()
 		return
 	}
 	arrayIsEmpty(arr){
@@ -1104,6 +1109,8 @@ class taskbarInterface {
 		return DllCall("Kernel32.dll\GetCurrentProcessId")
 	}
 	UnhookWinEvent(){
+		if !this.hHook
+			return
 		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook){
 			this.lastError:=Exception("UnhookWinEvent failed",-1)
 			if this.mute
@@ -1196,8 +1203,9 @@ class taskbarInterface {
 	}
 	turnOnButtonMessages(){
 		static WM_COMMAND := 0x111
-		if !this.buttonMessageFn
-			this.buttonMessageFn:=ObjBindMethod(this,"onButtonClick")	;	The monitor function is kept for 
+		if this.buttonMessageFn
+			return
+		this.buttonMessageFn:=ObjBindMethod(this,"onButtonClick")	;	The monitor function is kept for 
 		OnMessage(WM_COMMAND,this.buttonMessageFn) 						;	When the buttons are clicked, a WM_COMMAND message is sent.
 		return
 	}
