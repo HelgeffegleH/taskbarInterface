@@ -193,7 +193,8 @@ class taskbarInterface {
 		}
 		if !this.THUMBBUTTON
 			this.createButtons()							; Create the buttons for this interface.
-		taskbarInterface.turnOnButtonMessages()			; If monitoring is off, turn on.
+		taskbarInterface.turnOnButtonMessages()				; If monitoring is off, turn on.
+		taskbarInterface.startTaskbarMsgMonitor()
 		this.isDisabled:=false								; By default, the interface is not disabled, us stopThisButtonMonitor() to disable.
 		return 
 	}
@@ -594,6 +595,7 @@ class taskbarInterface {
 		; turns on button message monitor, deafult is on, hence no need to call if you didn't turn it off
 		if taskbarInterface.allDisabled {
 			taskbarInterface.turnOnButtonMessages()
+			taskbarInterface.startTaskbarMsgMonitor()
 			taskbarInterface.allDisabled:=false
 			return
 		}
@@ -653,9 +655,11 @@ class taskbarInterface {
 		if (bool:=(!taskbarInterface.manualClearInterface && taskbarInterface.arrayIsEmpty(taskbarInterface.allInterfaces))) && !taskbarInterface.hasTemplates		; If the last interface is released and no templates, release com.
 			taskbarInterface.clearInterface()
 		else if bool 
-			taskbarInterface.turnOffButtonMessages()
+			taskbarInterface.turnOffButtonMessages(), taskbarInterface.stopTaskbarMsgMonitor()
 		return
 	}
+	
+	
 	arrayIsEmpty(arr){
 		return !arr._NewEnum().next()
 	}
@@ -989,14 +993,8 @@ class taskbarInterface {
 				throw this.lastError
 		}
 		this.CoInitialize()																		; This might not be needed, it calls CoUnInitialize if needed.
-		if !taskbarCreatedMsgId
-			this.taskbarCreatedMsgId:=this.RegisterWindowMessage("TaskbarCreated")				; This might be rarly needed. In case the taskbar is destroyed and created, the interface needs to be refreshed.
-		this.taskbarCreatedMsgFn:=ObjBindMethod(this,"refreshAllButtons")						; This is a misnomer, refreshAllButtons that is.
-		OnMessage(this.taskbarCreatedMsgId,this.taskbarCreatedMsgFn)							; Register the message callback.
-		if !this.taskbarButtonCreatedMsgId
-			this.taskbarButtonCreatedMsgId:=this.RegisterWindowMessage("TaskbarButtonCreated")	; For keeping the interface "alive". Buttons, progress overlay icon, maybe more, are removed when the taskbar icon is removed, eg, if the window is hidden.
-		this.taskbarButtonCreatedMsgFn:=ObjBindMethod(this,"taskbarButtonCreatedMsgHandler")	; Monitor this message to automatically restore the interface when needed.
-		OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn)
+		this.startTaskbarMsgMonitor()
+		
 		; Hook
 		this.SetWinEventHook()
 		this.init:=1	; Success!
@@ -1014,10 +1012,7 @@ class taskbarInterface {
 				throw this.lastError
 		}
 		; Remove message handling
-		OnMessage(this.taskbarCreatedMsgId,this.taskbarCreatedMsgFn,0)
-		this.taskbarCreatedMsgFn:=""
-		OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn,0)
-		this.taskbarButtonCreatedMsgFn:=""
+		this.stopTaskbarMsgMonitor()
 		; Clear all boundFuncs
 		this.vTable:=""
 		
@@ -1066,7 +1061,8 @@ class taskbarInterface {
 		}
 		return msgn
 	}
-	taskbarButtonCreatedMsgHandler(wParam,lParam,msg,hwnd){	; for message: "TaskbarCreated" -> this.taskbarButtonCreatedMsgId, set in initInterface()
+	taskbarButtonCreatedMsgHandler(wParam,lParam,msg,hwnd){		; for message: "TaskbarCreated" -> this.taskbarButtonCreatedMsgId, set in initInterface()
+		critical("on")
 		if this.allInterfaces.Haskey(hwnd)
 			return this.allInterfaces[hwnd].refreshButtons()
 		return
@@ -1149,6 +1145,7 @@ class taskbarInterface {
 		static OBJID_WINDOW:=0
 		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,template,cls ; Awkward.
 		local WinExistIncludeParams,WinExistExcludeParams
+		Critical("On")
 		hWinEventHook	:=	NumGet(params+0,  -A_PtrSize, "Ptr" )
 		,event			:=	NumGet(params+0,		   0, "Uint")
 		,hwnd			:=	NumGet(params+0,   A_PtrSize, "Ptr" )
@@ -1230,6 +1227,30 @@ class taskbarInterface {
 			ref.callback.Call(buttonNumber,ref) 						;	The callback includes the button number and a reference to the interface. (Called in new thread)
 			return 1													;	No further handling of this message is needed, assumption.
 		}
+		return
+	}
+	; Taskbar messages - this is for restoring the interface in case the taskbar is destroyed or the 
+	; taskbar icon is destroyed and remade. For example when a window is hidden and then shown.
+	startTaskbarMsgMonitor(){
+		if !this.taskbarCreatedMsgId
+			this.taskbarCreatedMsgId:=this.RegisterWindowMessage("TaskbarCreated")					; This might be rarly needed. In case the taskbar is destroyed and created, the interface needs to be refreshed.
+		if !this.taskbarCreatedMsgFn
+			this.taskbarCreatedMsgFn:=ObjBindMethod(this,"refreshAllButtons")						; This is a misnomer, refreshAllButtons that is.
+		OnMessage(this.taskbarCreatedMsgId,this.taskbarCreatedMsgFn)								; Register the message callback.
+		if !this.taskbarButtonCreatedMsgId
+			this.taskbarButtonCreatedMsgId:=this.RegisterWindowMessage("TaskbarButtonCreated")		; For keeping the interface "alive". Buttons, progress overlay icon, maybe more, are removed when the taskbar icon is removed, eg, if the window is hidden.
+		if !this.taskbarButtonCreatedMsgFn
+			this.taskbarButtonCreatedMsgFn:=ObjBindMethod(this,"taskbarButtonCreatedMsgHandler")	; Monitor this message to automatically restore the interface when needed.
+		OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn)
+		return
+	}
+	stopTaskbarMsgMonitor(){
+		if this.taskbarCreatedMsgFn
+			OnMessage(this.taskbarCreatedMsgId,this.taskbarCreatedMsgFn,0)
+		this.taskbarCreatedMsgFn:=""
+		if this.taskbarButtonCreatedMsgFn
+			OnMessage(this.taskbarButtonCreatedMsgId,this.taskbarButtonCreatedMsgFn,0)
+		this.taskbarButtonCreatedMsgFn:=""
 		return
 	}
 	; Custom preview message handling
