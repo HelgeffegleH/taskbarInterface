@@ -198,8 +198,8 @@ class taskbarInterface {
 			bigIconHandle:=smallIconHandle
 		this.smallIconHandle:=smallIconHandle
 		this.bigIconHandle:=bigIconHandle
-		this.PostMessage(this.hWnd,WM_SETICON,ICON_SMALL,smallIconHandle)
-		this.PostMessage(this.hWnd,WM_SETICON,ICON_BIG,bigIconHandle)
+		this.PostMessage(WM_SETICON,ICON_SMALL,smallIconHandle)
+		this.PostMessage(WM_SETICON,ICON_BIG,bigIconHandle)
 		return
 	}
 	;<< progress >>
@@ -710,11 +710,17 @@ class taskbarInterface {
 			this.freeBitmap(this.peekHbm), this.peekHbm:=""
 		return
 	}
-	PostMessage(hWnd,Msg,wParam,lParam){
+	PostMessage(Msg,wParam,lParam){
 		; Url:
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms644944(v=vs.85).aspx
 		; Used by setTaskbarIcon()
-		return DllCall("User32.dll\PostMessage", "Ptr", hWnd, "Uint", Msg, "Uptr", wParam, "Ptr", lParam)
+		local
+		if type(wParam) != "Integer" || type(lParam) != "Integer"
+			this.exception("Parameter must be integer.`n" wParam "`n" lParam)
+		dhw := a_detectHiddenWindows
+		detectHiddenWindows true
+		PostMessage Msg , wParam, lParam,, "ahk_id" this.hWnd
+		detectHiddenWindows dhw
 	}
 	verifyId(iId){
 	; Ensures the button number iId, is in the correct range.
@@ -1236,7 +1242,8 @@ class taskbarInterface {
 		ref:=taskbarInterface.allInterfaces[hWnd]
 		if !ref
 			return
-		this.GetClientRect(hwnd,w,h)																							; Get the max width and height of the bitmap
+		
+		winGetClientPos ,, w, h, "ahk_id" hwnd 				; Get the max width and height of the bitmap
 		if (ref.savePeekBitmap && ref.peekHbm) || (ref.peekHbm && A_TickCount-ref.ppeekTic<ref.peekrate)
 			return this.Dwm_SetIconicLivePreviewBitmap(hWnd,ref.peekHbm,ref.peekX,ref.peekY, false,ref.dwSITFlagsPeekPreview)	; Set the new bitmap
 		ref.freePeekPreviewBMP()																								; Conditional: if (ref.peekHbm && ref.deleteBMPPeekPreview)
@@ -1433,18 +1440,6 @@ class taskbarInterface {
 	}
 	freeBitmap(hbm){
 		return DllCall("Gdi32.dll\DeleteObject", "Ptr", hbm)
-	}
-	; Misc:
-	GetClientRect(hwnd,ByRef X2, ByRef Y2){
-		local rc
-		VarSetCapacity(rc,16)
-		DllCall("GetClientRect", "Ptr", hwnd, "Ptr", &rc)
-		X2:=NumGet(rc,8,"Int")
-		Y2:=NumGet(rc,12,"Int")
-	}
-
-	min(x,y){
-		return (x<y)*x+(y<=x)*y
 	}
 	; 
 	exception(msg, depth := -1, r := ""){
