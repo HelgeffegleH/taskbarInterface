@@ -726,8 +726,8 @@ class taskbarInterface {
 	; Ensures the button number iId, is in the correct range.
 	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
 	; This is called when appropriate form __Call()
-		if (iId<1 || iId>7 || round(iId)!=iId)
-			this.exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
+		if (iId<1 || iId>7 || type(iId) != "Integer")
+			this.exception("Button number must be an pure integer in the in range 1 to 7 (inclusive)",-2)
 		return 1
 	}
 	createButtons(){
