@@ -2,15 +2,10 @@
 class taskbarInterface {
 	static hookWindowClose:=true							; Use SetWinEventHook to automatically clear the interface when its window is destroyed. 
 	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
-	__new(hwnd,onButtonClickFunction:="",mute:=false){
-		this.mute:=mute										; By default, errors are thrown. Set mute:=true to suppress exceptions.
-		if taskbarInterface.allInterfaces.HasKey(hwnd){
-			this.lastError:=Exception("There is already an interface for this window.",-1)
-			if mute
-				Exit
-			else
-				throw this.lastError
-		}
+	__new(hwnd,onButtonClickFunction:=""){
+		if taskbarInterface.allInterfaces.HasKey(hwnd)
+			this.exception("There is already an interface for this window.",-1)
+			
 		this.dim:=this.queryButtonIconSize()				; this is used by addToImageList.
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
 		this.hwnd:=hwnd										; Handle to the window whose taskbar preview will recieve the buttons
@@ -68,16 +63,15 @@ class taskbarInterface {
 		this.ThumbBarSetImageList()
 		return this.ThumbBarUpdateButtons(n)				; Update
 	}
-	addToImageList(bitmap,bitmapIsHandle:=false){
+	addToImageList(bitmap){
 		; Add bitmaps to the imagelist for the buttons
 		; bitmap, a handle to a bitmap or a path to an image, or and object on the form: [path,iconNumber], eg, bitmap:=[shell32.dll, 37]. Path is relative to script directory if not full.
-		; specify bitmapIsHandle:=true if bitmap is a handle to a bitmap.
 		; Returns the added images index in the imagelist. The first image has index 1, second 2 and so on...
 		; When specifying a handle, call queryButtonIconSize() to obtain the required size of the bitmap. See queryButtonIconSize() below.
 		local file, iconNumber,hBmp, index
 		if !this.hImageList
 			this.hImageList:=IL_Create(7,1)
-		if bitmapIsHandle {
+		if type(bitmap) == "Integer" {
 			index:=IL_Add(this.hImageList,"hBitmap:" . bitmap)
 		} else {
 			if IsObject(bitmap)
@@ -85,13 +79,9 @@ class taskbarInterface {
 			else
 				file:=bitmap, iconNumber:=""
 			hBmp:=LoadPicture(file, iconNumber . " Gdi+ w" this.dim.w  " h" this.dim.h)
-			if !hBmp {
-				this.lastError:=Exception("Invalid file name")
-				if this.mute
-					return this.lastError
-				else
-					throw this.lastError
-			}
+			if !hBmp
+				this.exception("Invalid file name: " file ".")
+			
 			index:=IL_Add(this.hImageList, "hBitmap:" . hBmp)
 		}
 		return index
@@ -103,11 +93,7 @@ class taskbarInterface {
 			this.hImageList:=""
 			return 1
 		} else if this.hImageList {
-			this.lastError:=Exception("ImageList destroy failed.") 
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
+			this.exception("ImageList destroy failed.") 
 		}
 		return
 	}
@@ -391,15 +377,11 @@ class taskbarInterface {
 		}
 		taskbarInterface.nCustomPreviews++														; Increment counter, to track when to turn on / off message handler
 		rate := (IsObject(bitmapOrBitmapFunc) && rate=0) ? 1 : rate 							; If user doesn't follow instructions, try  to save the day.
-		bitmapFunc:= IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
-		this.bitmapFunc:= new threadFunc(bitmapFunc,,,,this.mute)										
-		if !this.bitmapFunc {																	; If invalid bitmapFunc, return/throw exception
-			this.lastError:=Exception("The provided bitmap (function) is not a valid.", -1)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		bitmapFunc := IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : !isObject(bitmapOrBitmapFunc) && IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
+		this.bitmapFunc:= new threadFunc(bitmapFunc)										
+		if !this.bitmapFunc																		; If invalid bitmapFunc, return/throw exception
+			this.exception("The provided bitmap (function) is not a valid.", -1)
+		
 		this.thumbrate:=rate
 		this.saveThumbBitmap:= rate=0 ? true : false
 		if !rate
@@ -450,15 +432,11 @@ class taskbarInterface {
 		}
 		taskbarInterface.nCustomPeekPreviews++														; Increment counter, to track when to turn on / off message handler
 		rate := (IsObject(bitmapOrBitmapFunc) && rate=0) ? 1 : rate 								; If user doesn't follow instructions, try  to save the day.
-		peekbitmapFunc:= IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
-		this.peekbitmapFunc:= new threadFunc(peekbitmapFunc,,,,this.mute)
-		if !this.peekbitmapFunc {																	; If invalid bitmapOrBitmapFunc, return/throw exception
-			this.lastError:=Exception("The provided bitmap (function) is not a valid.", -1)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		peekbitmapFunc:= IsObject(bitmapOrBitmapFunc) || rate=0 ? bitmapOrBitmapFunc : !isObject(bitmapOrBitmapFunc) && IsFunc(bitmapOrBitmapFunc) ? func(bitmapOrBitmapFunc) : 0		; Store the bitmap provider function.
+		this.peekbitmapFunc:= new threadFunc(peekbitmapFunc)
+		if !this.peekbitmapFunc 																	; If invalid bitmapOrBitmapFunc, return/throw exception
+			this.exception("The provided bitmap (function) is not a valid.", -1)
+		
 		this.peekrate:=rate
 		this.savePeekBitmap:= rate=0 ? true : false
 		if !rate
@@ -560,10 +538,6 @@ class taskbarInterface {
 	unexemptFromHook(){
 		return this.allowHooking:=true
 	}
-	getLastError(){
-		; Returns the last error object from exception(...)
-		return this.lastError
-	}
 	; Moved queryButtonIconSize to button method section, for convenience
 	; Class methods, affects all interfaces
 	refreshAllButtons(){
@@ -637,11 +611,8 @@ class taskbarInterface {
 					. ",setButtonToolTip,dismissPreviewOnButtonClick,removeButtonBackground"
 					. ",reAddButtonBackground,setButtonNonInteractive,setButtonInteractive,", "," . fn . ",") {
 			if this.isFreed {
-				this.lastError:=Exception("This interface has freed its memory, it cannot be used.",-1) 
-				if this.mute
-					return this.lastError
-				else
-					throw this.lastError					; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
+				; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
+				this.exception("This interface has freed its memory, it cannot be used.",-1) 
 			} else if (!this.THUMBBUTTON && taskbarInterface.init) {
 				this.createButtons()
 			}
@@ -749,13 +720,8 @@ class taskbarInterface {
 	; Ensures the button number iId, is in the correct range.
 	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
 	; This is called when appropriate form __Call()
-		if (iId<1 || iId>7 || round(iId)!=iId) {
-			this.lastError:=Exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
-			if this.mute
-				Exit
-			else
-				throw this.lastError
-		}
+		if (iId<1 || iId>7 || round(iId)!=iId)
+			this.exception("Button number must be an integer in the in range 1 to 7 (inclusive)",-2)
 		return 1
 	}
 	createButtons(){
@@ -764,13 +730,9 @@ class taskbarInterface {
 		static THB_FLAGS:=0x00000008
 		static THBF_HIDDEN:=0x8
 		local structOffset
-		if this.THUMBBUTTON {
-			this.lastError:=Exception("Buttons already created, clear this instance or make a refresh")
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		if this.THUMBBUTTON
+			this.exception("Buttons already created, clear this instance or make a refresh")
+		
 		this.THUMBBUTTON:=this.GlobalAlloc(this.thumbButtonSize*7)
 		
 		loop 7 {
@@ -951,13 +913,8 @@ class taskbarInterface {
 		static IID_ITaskbarList3 := "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"
 		local hr
 		this.hComObj := ComObjCreate(CLSID_TaskbarList, IID_ITaskbarList3)
-		if !this.hComObj {
-			this.lastError:=Exception("ComObjCreate failed",-2)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		if !this.hComObj
+			this.exception("ComObjCreate failed",-2)
 		; Get the address to the vTable.
 		this.vTablePtr:=NumGet(this.hComObj+0,0,"Ptr")
 		; Create function objects for the interface, for convenience and clarity
@@ -985,13 +942,8 @@ class taskbarInterface {
 		this.vTable["ThumbnailClipFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetThumbnailClip			(20)
 		
 		hr:=this.vTable.HrInitFn.Call()	; Init the interface.
-		if hr {
-			this.lastError:=Exception("Com failed to initialise.",-2)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		if hr
+			this.exception("Com failed to initialise.",-2)
 		this.CoInitialize()																		; This might not be needed, it calls CoUnInitialize if needed.
 		this.startTaskbarMsgMonitor()
 		
@@ -1004,13 +956,9 @@ class taskbarInterface {
 		local hr
 		this.turnOffButtonMessages()
 		hr := ObjRelease(this.hComObj)
-		if hr {
-			this.lastError:=Exception("Com realease failed",-2)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		if hr 
+			this.exception("Com realease failed",-2)
+			
 		; Remove message handling
 		this.stopTaskbarMsgMonitor()
 		; Clear all boundFuncs
@@ -1052,13 +1000,9 @@ class taskbarInterface {
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms644947(v=vs.85).aspx (RegisterWindowMessage function)
 		;  If the function fails, the return value is zero. To get extended error information, call GetLastError.
 		local msgn
-		if !(msgn:=DllCall("User32.dll\RegisterWindowMessage", "Str", msgName)){
-			this.lastError:=Exception("RegisterWindowMessage failed to register " msgName ".`nAdditional info: " A_LastError ".",-1)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
+		if !(msgn:=DllCall("User32.dll\RegisterWindowMessage", "Str", msgName))
+			this.exception("RegisterWindowMessage failed to register " msgName ".",-1)
+			
 		return msgn
 	}
 	taskbarButtonCreatedMsgHandler(wParam,lParam,msg,hwnd){		; for message: "TaskbarCreated" -> this.taskbarButtonCreatedMsgId, set in initInterface()
@@ -1098,34 +1042,24 @@ class taskbarInterface {
 			this.UnhookWinEvent()
 		if !(this.hookWindowClose || this.hasTemplates)
 			return
-		this.WinEventProcFn:=RegisterCallback(this.WinEventProc)
+		this.WinEventProcFn:=callbackcreate(this.WinEventProc.bind( taskbarInterface ), "&", 7) ; bind( taskbarInterface ) is for the 'this' parameter.
 		this.CoInitialize()
 		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", this.hookWindowClose ? EVENT_OBJECT_DESTROY : EVENT_OBJECT_SHOW, "Uint", this.hasTemplates ? EVENT_OBJECT_SHOW : EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
-		if !this.hHook {
-			this.lastError:=Exception("SetWinEventHook failed",-1)
-			if this.mute
-				return
-			else
-				throw this.lastError
-		}
+		if !this.hHook
+			this.exception("SetWinEventHook failed",-1)
 		return
 	}
 	UnhookWinEvent(){
 		if !this.hHook
 			return
-		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook){
-			this.lastError:=Exception("UnhookWinEvent failed",-1)
-			if this.mute
-				return
-			else
-				throw this.lastError
-		}
+		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook)
+			this.exception("UnhookWinEvent failed",-1)
 		this.GlobalFree(this.WinEventProcFn) ; Free callback function after hook is removed.
 		if !this.hComObj
 			this.CoUnInitialize(true)
 		return this.hHook:=""
 	}
-	WinEventProc(params*) {
+	WinEventProc(params) {
 		;(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime)
 		/*
 		Url:
@@ -1143,20 +1077,19 @@ class taskbarInterface {
 		static EVENT_OBJECT_DESTROY:=0x8001	
 		static EVENT_OBJECT_SHOW:=0x8002	
 		static OBJID_WINDOW:=0
-		local hWinEventHook,event,hwnd,idObject,idChild,dwEventThread,dwmsEventTime,i,template,cls ; Awkward.
-		local WinExistIncludeParams,WinExistExcludeParams
-		Critical("On")
-		hWinEventHook	:=	NumGet(params+0,  -A_PtrSize, "Ptr" )
-		,event			:=	NumGet(params+0,		   0, "Uint")
-		,hwnd			:=	NumGet(params+0,   A_PtrSize, "Ptr" )
-		,idObject		:=	NumGet(params+0, 2*A_PtrSize, "Int" )
-		,idChild		:=	NumGet(params+0, 3*A_PtrSize, "Int" )
-		,dwEventThread	:=	NumGet(params+0, 4*A_PtrSize, "Uint")
-		,dwmsEventTime	:=	NumGet(params+0, 5*A_PtrSize, "Uint")
+		local
+		global taskbarInterface
+		critical true
+		hWinEventHook	:=	NumGet(params,	a_ptrsize*0, "Ptr" )
+		,event			:=	NumGet(params,	a_ptrsize*1, "Uint")
+		,hwnd			:=	NumGet(params,	a_ptrsize*2, "Ptr" )
+		,idObject		:=	NumGet(params,	a_ptrsize*3, "Int" )
+		,idChild		:=	NumGet(params,	a_ptrsize*4, "Int" )
+		,dwEventThread	:=	NumGet(params,	a_ptrsize*5, "Uint")
+		,dwmsEventTime	:=	NumGet(params,	a_ptrsize*6, "Uint")
 		if (idObject!=OBJID_WINDOW)
 			return
-		cls:=WinGetClass("ahk_id" hwnd)
-		if (cls = "tooltips_class32")		; Do not consider tooltips created by the script.
+		if (WinGetClass("ahk_id" hwnd) = "tooltips_class32")		; Do not consider tooltips created by the script.
 			return
 		if (event == EVENT_OBJECT_DESTROY) {
 			if taskbarInterface.allInterfaces.HasKey(hwnd)
@@ -1218,7 +1151,7 @@ class taskbarInterface {
 		; LOWORD of wParam is the button number.						(wParam&0xffff)
 		static THBN_CLICKED := 0x1800
 		local ref,buttonNumber
-		Critical("On")
+		critical true
 		if (wParam >> 16 = THBN_CLICKED) && taskbarInterface.allInterfaces.HasKey(hWnd) {
 			ref:=taskbarInterface.allInterfaces[hWnd] 					;	The reference to the interface whose button was clicked
 			if (ref.isDisabled || !ref.callback)						;	If the reference is disabled of has no callback function. Return.
@@ -1266,7 +1199,7 @@ class taskbarInterface {
 		;	Notes:
 		; 		Requested size of thumbnail, can be smaller, not bigger
 		local ref,w,h,tf
-		Critical("On")
+		critical true
 		ref:=taskbarInterface.allInterfaces[hWnd]
 		if !ref
 			return
@@ -1299,7 +1232,7 @@ class taskbarInterface {
 		;	Notes: The size of the bitmap should (perhaps must) fit the client rectangle.
 		;
 		local ref,w,h,tf
-		Critical("On")
+		critical true
 		ref:=taskbarInterface.allInterfaces[hWnd]
 		if !ref
 			return
@@ -1485,14 +1418,8 @@ class taskbarInterface {
 		static uFlags:=GMEM_ZEROINIT	; For clarity.
 		local h
 		h:=DllCall("Kernel32.dll\GlobalAlloc", "Uint", uFlags, "Ptr", dwBytes, "Ptr")
-		if !h {
-			this.lastError:=Exception("Memory alloc failed.",-1)
-			if this.mute
-				return this.lastError
-			else
-				throw this.lastError
-		}
-		
+		if !h
+			this.exception("Memory alloc failed.",-1)	
 		return h
 	}
 	GlobalFree(hMem){
@@ -1500,13 +1427,8 @@ class taskbarInterface {
 		;	- https://msdn.microsoft.com/en-us/library/windows/desktop/aa366579(v=vs.85).aspx (GlobalFree function)
 		local h
 		h:=DllCall("Kernel32.dll\GlobalFree", "Ptr", hMem, "Ptr")
-		if h {
-			this.lastError:=Exception("Memory free failed",-1)
-			if this.mute
-				return
-			else
-				throw this.lastError
-		}
+		if h 
+			this.exception("Memory free failed",-1)
 		return h
 	}
 	freeBitmap(hbm){
@@ -1524,6 +1446,51 @@ class taskbarInterface {
 	min(x,y){
 		return (x<y)*x+(y<=x)*y
 	}
+	; 
+	exception(msg, depth := -1, r := ""){
+		throw new this.error(msg, depth, r)
+	}
+	;
+	;	Nested class for error handling
+	;
+	
+	class error {
+		__new(msg:="",depth:=-1,r:=""){
+			local
+			msg.="`n`nErrorLevel: " . ErrorLevel . "`nLast error: " . this.formatLastError() . (IsObject(r) ? "`nFunction returned: " . r[1] : "`nNo return value specified.") . this.getCallStack()
+			return exception(msg,-abs(depth)-2) ; -2 to never show inside error class.
+			
+		}
+		formatLastError(msgn:=""){
+			; Url:
+			;	- https://msdn.microsoft.com/en-us/library/windows/desktop/ms679351(v=vs.85).aspx (FormatMessage function)
+			; 
+			local msg
+			local lpBuffer:=0 ; avoids #warn all message. 
+			static FORMAT_MESSAGE_ALLOCATE_BUFFER:=0x00000100
+			static FORMAT_MESSAGE_FROM_SYSTEM:=0x00001000
+			if (msgn="")
+				msgn:=A_LastError
+			DllCall("Kernel32.dll\FormatMessage", "Uint", FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, "Ptr", 0, "Uint",  msgn, "Uint", 0, "PtrP", lpBuffer,  "Uint", 0, "Ptr", 0, "Uint")
+			msg:=StrGet(lpBuffer+0)
+			if !DllCall("Kernel32.dll\HeapFree", "Ptr", DllCall("Kernel32.dll\GetProcessHeap","Ptr"), "Uint", 0, "Ptr", lpBuffer) ; If the function succeeds, the return value is nonzero.
+				throw Exception("HeapFree failed.")
+			return StrReplace(msg,"`r`n") . "  " . msgn . Format(" (0x{:04x})",msgn)
+		}
+		getCallStack(){
+			local
+			o:=[]
+			h:=0
+			while !( ( e:=exception("",-5-abs(h)) ).What < 0 )
+				o.insertAt(1, e.What "`t`t" . e.line),h++
+			str:="`n`nCallstack:`n"
+			for k, v in o
+				str.=k " " v "`n" 
+			return str
+		}
+	}
+
+	
 	; Additional reference:
 	; ShObjIdl.h:
 	/*
