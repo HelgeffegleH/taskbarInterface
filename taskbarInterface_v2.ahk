@@ -4,7 +4,7 @@ class taskbarInterface {
 	static manualClearInterface:=false						; Set to false to automatically clear com interface when the last reference to an object derived from the taskbarInterface class is released. call taskbarInterface.clearInterface()
 	__new(hwnd,onButtonClickFunction:=""){
 		if taskbarInterface.allInterfaces.HasKey(hwnd)
-			this.exception("There is already an interface for this window.",-1)
+			this.exception("There is already an interface for this window.")
 			
 		this.dim:=this.queryButtonIconSize()				; this is used by addToImageList.
 		taskbarInterface.allInterfaces[hwnd]:=this			; allInterfaces array is used for routing the callbacks.
@@ -727,7 +727,7 @@ class taskbarInterface {
 	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
 	; This is called when appropriate form __Call()
 		if (iId<1 || iId>7 || type(iId) != "Integer")
-			this.exception("Button number must be an pure integer in the in range 1 to 7 (inclusive)",-2)
+			this.exception("Button number must be a pure integer in the in range 1 to 7 (inclusive)")
 		return 1
 	}
 	createButtons(){
@@ -1442,18 +1442,20 @@ class taskbarInterface {
 		return DllCall("Gdi32.dll\DeleteObject", "Ptr", hbm)
 	}
 	; 
-	exception(msg, depth := -1, r := ""){
-		throw new this.error(msg, depth, r)
+	exception(msg, depth := 0, r := ""){
+		static defaultDepth := 2 ; to never show inside error class or wrapper function.
+		throw new this.error(msg, depth, r, defaultDepth) 
 	}
 	;
 	;	Nested class for error handling
 	;
 	
 	class error {
-		__new(msg:="",depth:=-1,r:=""){
+		__new(msg:="",depth:=0,r:="",defaultDepth:=1){
 			local
+			this.defaultDepth := defaultDepth
 			msg.="`n`nErrorLevel: " . ErrorLevel . "`nLast error: " . this.formatLastError() . (IsObject(r) ? "`nFunction returned: " . r[1] : "`nNo return value specified.") . this.getCallStack()
-			return exception(msg,-abs(depth)-2) ; -2 to never show inside error class.
+			return exception(msg,-abs(depth)-this.defaultDepth) 
 			
 		}
 		formatLastError(msgn:=""){
@@ -1476,7 +1478,7 @@ class taskbarInterface {
 			local
 			o:=[]
 			h:=0
-			while !( ( e:=exception("",-5-abs(h)) ).What < 0 )
+			while !( ( e:=exception("",-this.defaultDepth-2-abs(h)) ).What < 0 )
 				o.insertAt(1, e.What "`t`t" . e.line),h++
 			str:="`n`nCallstack:`n"
 			for k, v in o
