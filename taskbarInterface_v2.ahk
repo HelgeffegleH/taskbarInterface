@@ -613,10 +613,11 @@ class taskbarInterface {
 	; Meta functions 
 	;
 	__Call(fn,p*){
-		; For verifying correct input. maybe change this.
-		if InStr( 	  ",showButton,hideButton,setButtonImage,setButtonIcon,enableButton,disableButton"
-					. ",setButtonToolTip,dismissPreviewOnButtonClick,removeButtonBackground"
-					. ",reAddButtonBackground,setButtonNonInteractive,setButtonInteractive,", "," . fn . ",") {
+		static buttonFunctions := { showButton : 1, hideButton : 1, setButtonImage : 1, setButtonIcon : 1, enableButton : 1,
+									disableButton : 1, setButtonToolTip : 1, dismissPreviewOnButtonClick : 1, removeButtonBackground : 1,
+									reAddButtonBackground : 1, setButtonNonInteractive : 1, setButtonInteractive : 1 }
+		; For verifying correct input for button functions.
+		if buttonFunctions.hasKey(fn) {
 			if this.isFreed {
 				; If the user tries to alter the apperance or function of the interface after memory was free, throw an exception.
 				this.exception("This interface has freed its memory, it cannot be used.",-1) 
@@ -738,7 +739,7 @@ class taskbarInterface {
 	; Avoids unexpected behaviour by passing an address outside of allocated memory in this.THUMBBUTTON
 	; This is called when appropriate form __Call()
 		if (iId<1 || iId>7 || type(iId) != "Integer")
-			this.exception("Button number must be a pure integer in the in range 1 to 7 (inclusive)")
+			this.exception("Button number must be a pure integer in the in range 1 to 7 (inclusive). Recieved: " iId " ( " type(iId) " )" )
 		return 1
 	}
 	createButtons(){
@@ -933,7 +934,7 @@ class taskbarInterface {
 		if !this.hComObj
 			this.exception("ComObjCreate failed",-2)
 		; Get the address to the vTable.
-		this.vTablePtr:=NumGet(this.hComObj+0,0,"Ptr")
+		this.vTablePtr:=NumGet(this.hComObj,0,"Ptr")
 		; Create function objects for the interface, for convenience and clarity
 			
 																																								; Name:					 Number:
@@ -1480,7 +1481,7 @@ class taskbarInterface {
 			if (msgn="")
 				msgn:=A_LastError
 			DllCall("Kernel32.dll\FormatMessage", "Uint", FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER, "Ptr", 0, "Uint",  msgn, "Uint", 0, "PtrP", lpBuffer,  "Uint", 0, "Ptr", 0, "Uint")
-			msg:=StrGet(lpBuffer+0)
+			msg:=StrGet(lpBuffer)
 			if !DllCall("Kernel32.dll\HeapFree", "Ptr", DllCall("Kernel32.dll\GetProcessHeap","Ptr"), "Uint", 0, "Ptr", lpBuffer) ; If the function succeeds, the return value is nonzero.
 				throw Exception("HeapFree failed.")
 			return StrReplace(msg,"`r`n") . "  " . msgn . Format(" (0x{:04x})",msgn)
