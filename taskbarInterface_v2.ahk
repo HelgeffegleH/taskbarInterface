@@ -259,12 +259,19 @@ class taskbarInterface {
 	; 	indicative of actual progress.
 
 	SetProgressType(type:="Normal"){
-		static dictionary:={Off:0,INDETERMINATE:1,Normal:2, Green:2, Error:4, Red:4,Paused:8,Pause:8,Yellow:8}
-		local p
-		this.progressType:= (p:=dictionary[type]) ? p : 0
+		this.progressType := verifyType(type)
 		if !this.flashTimer
 			this.preFlashSettings[2]:=type
 		return this.setProgressState()
+		verifyType(type){
+			static dictionary := {Off:0,INDETERMINATE:1,"?":1,Normal:2, Green:2, Error:4, Red:4,Paused:8,Pause:8,Yellow:8}
+			static dictionaryInt := {0:0, 1:1, 2:2, 4:4, 8:8}
+			if type(type) == "Integer" && dictionaryInt.haskey(type)
+				return type
+			else if dictionary.haskey(type)
+				return dictionary[type]
+			this.exception("Invalid progress type: " type " ( " type(type) " ).")
+		}
 	}
 	preFlashSettings:=[] ; For restoring taskbar progress / color after flash
 	flashTaskbarIcon(color:="off", nFlashes:=5, flashTime:=250, offTime:=250){
