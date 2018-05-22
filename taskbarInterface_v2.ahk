@@ -1023,7 +1023,7 @@ class taskbarInterface {
 		return msgn
 	}
 	taskbarButtonCreatedMsgHandler(wParam,lParam,msg,hwnd){		; for message: "TaskbarCreated" -> this.taskbarButtonCreatedMsgId, set in initInterface()
-		critical("on")
+		critical true
 		if this.allInterfaces.Haskey(hwnd)
 			return this.allInterfaces[hwnd].refreshButtons()
 		return
