@@ -939,7 +939,6 @@ class taskbarInterface {
 			
 																																								; Name:					 Number:
 		; For convenience when freeing the interface, add all bound funcs to one array																																					
-		 ;this.vTable:={}
 		this.vTable:=[]                                                                                                                                
 		this.vTable["HrInitFn"]					:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 3*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; HrInit					( 3)
 		this.vTable["addTabFn"]					:= Func("DllCall").Bind(NumGet(this.vTablePtr+ 4*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; AddTab					( 4)
@@ -960,13 +959,19 @@ class taskbarInterface {
 		this.vTable["ThumbnailClipFn"]			:= Func("DllCall").Bind(NumGet(this.vTablePtr+20*A_PtrSize,0,"Ptr"), "Ptr", this.hComObj)						; SetThumbnailClip			(20)
 		
 		hr:=this.vTable.HrInitFn.Call()	; Init the interface.
-		if hr
+		if hr {
+			ObjRelease(this.hComObj)
 			this.exception("Com failed to initialise.",-2)
+		}
 		this.CoInitialize()																		; This might not be needed, it calls CoUnInitialize if needed.
-		this.startTaskbarMsgMonitor()
-		
-		; Hook
-		this.SetWinEventHook()
+		local e
+		try {
+			this.startTaskbarMsgMonitor()
+			this.SetWinEventHook() ; Hook
+		} catch e {
+			this.clearInterface()
+			throw e
+		}
 		this.init:=1	; Success!
 		return	
 	}
