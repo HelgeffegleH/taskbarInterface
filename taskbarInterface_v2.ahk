@@ -726,8 +726,12 @@ class taskbarInterface {
 			this.exception("Parameter must be integer.`n" wParam "`n" lParam)
 		dhw := a_detectHiddenWindows
 		detectHiddenWindows true
-		PostMessage Msg , wParam, lParam,, "ahk_id" this.hWnd
-		detectHiddenWindows dhw
+		try
+			PostMessage Msg , wParam, lParam,, "ahk_id" this.hWnd
+		catch e
+			this.exception(e.Message)
+		finally
+			detectHiddenWindows dhw
 	}
 	verifyId(iId){
 	; Ensures the button number iId, is in the correct range.
