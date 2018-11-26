@@ -1065,7 +1065,7 @@ class taskbarInterface {
 			this.UnhookWinEvent()
 		if !(this.hookWindowClose || this.hasTemplates)
 			return
-		this.WinEventProcFn:=callbackcreate(this.WinEventProc.bind( taskbarInterface ), "&", 7) ; bind( taskbarInterface ) is for the 'this' parameter.
+		this.WinEventProcFn := callbackcreate(this.WinEventProc.bind( '' ), , 7) ; bind( '' ) is for the 'this' parameter.
 		this.CoInitialize()
 		this.hHook:=DllCall("User32.dll\SetWinEventHook", "Uint", this.hookWindowClose ? EVENT_OBJECT_DESTROY : EVENT_OBJECT_SHOW, "Uint", this.hasTemplates ? EVENT_OBJECT_SHOW : EVENT_OBJECT_DESTROY, "Ptr", 0, "Ptr", this.WinEventProcFn, "Uint", ProcessExist(), "Uint", idThread, "Uint", 0, "Ptr")
 		if !this.hHook
@@ -1077,12 +1077,12 @@ class taskbarInterface {
 			return
 		if !DllCall("User32.dll\UnhookWinEvent", "Ptr", this.hHook)
 			this.exception("UnhookWinEvent failed",-1)
-		this.GlobalFree(this.WinEventProcFn) ; Free callback function after hook is removed.
+		callbackFree(this.WinEventProcFn) ; Free callback function after hook is removed.
 		if !this.hComObj
 			this.CoUnInitialize(true)
 		return this.hHook:=""
 	}
-	WinEventProc(params) {
+	WinEventProc(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime) {
 		;(hWinEventHook, event, hwnd, idObject, idChild, dwEventThread, dwmsEventTime)
 		/*
 		Url:
@@ -1103,13 +1103,6 @@ class taskbarInterface {
 		local
 		global taskbarInterface
 		critical true
-		hWinEventHook	:=	NumGet(params,	a_ptrsize*0, "Ptr" )
-		,event			:=	NumGet(params,	a_ptrsize*1, "Uint")
-		,hwnd			:=	NumGet(params,	a_ptrsize*2, "Ptr" )
-		,idObject		:=	NumGet(params,	a_ptrsize*3, "Int" )
-		,idChild		:=	NumGet(params,	a_ptrsize*4, "Int" )
-		,dwEventThread	:=	NumGet(params,	a_ptrsize*5, "Uint")
-		,dwmsEventTime	:=	NumGet(params,	a_ptrsize*6, "Uint")
 		if (idObject!=OBJID_WINDOW)
 			return
 		if (WinGetClass("ahk_id" hwnd) = "tooltips_class32")		; Do not consider tooltips created by the script.
@@ -1117,7 +1110,7 @@ class taskbarInterface {
 		if (event == EVENT_OBJECT_DESTROY) {
 			if taskbarInterface.allInterfaces.HasKey(hwnd)
 				taskbarInterface.allInterfaces[hwnd].clear()
-			return 
+			return
 		} else if (event == EVENT_OBJECT_SHOW && taskbarInterface.hasTemplates) {	; Templates 
 			if taskbarInterface.allInterfaces.HasKey(hwnd) ; If the hwnd alredy has an interface, return
 				return
